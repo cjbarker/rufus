@@ -126,15 +126,30 @@ Detect and manage faces in your photo library. Supports detection, labeling, sea
 
 #### `faces detect`
 
-Run face detection on all indexed images not yet processed. Requires dlib models to be installed.
+Run face detection on all indexed images not yet processed. On first run, dlib models are downloaded automatically to `~/.rufus/models/`. Already-scanned images are skipped unless `--force` is passed.
+
+After detection, a rematch pass runs automatically: all unlabeled faces in the database are compared against any known labels, so running `detect` again after labeling a face propagates that label to similar unscanned faces without needing `--force`.
 
 ```bash
-rufus faces detect
+rufus faces detect            # scan new images only; rematch unlabeled faces against known labels
+rufus faces detect --force    # re-scan all images, clearing existing face records first
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--force` / `-f` | `false` | Re-scan all images, ignoring the face-scan cache |
+
+#### `faces unlabeled`
+
+List all detected faces that have not yet been assigned a person name. Use the face IDs shown here with `faces label`.
+
+```bash
+rufus faces unlabeled
 ```
 
 #### `faces label`
 
-Assign a name to a detected face.
+Assign a name to a detected face. Creates the person if they do not already exist. Re-run `faces detect` afterward to propagate the new label to similar unlabeled faces.
 
 ```bash
 rufus faces label <face-id> <name>
@@ -156,11 +171,11 @@ List all known labeled people.
 rufus faces list
 ```
 
-**Shared flag:**
+**Shared flag (all `faces` subcommands):**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--tolerance` | `0.6` | Face match tolerance (lower = stricter) |
+| `--tolerance` | `0.6` | Maximum Euclidean distance between face descriptors to count as a match. Lower values are stricter (fewer auto-assignments); higher values match across more variation in lighting and angle but risk false positives. Recommended range: `0.5`–`0.65`. |
 
 ### `version`
 
