@@ -30,7 +30,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	spinner := ui.NewSpinner("Loading index...")
 	spinner.Start()

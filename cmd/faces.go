@@ -86,7 +86,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Load images to process: unscanned only, or all images when --force is set.
 	var images []db.ImageRecord
@@ -386,7 +386,7 @@ func runFacesLabel(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	var faceID int64
 	if _, err := fmt.Sscanf(args[0], "%d", &faceID); err != nil {
@@ -410,7 +410,7 @@ func runFacesFind(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	detector := faces.NewDetector(store, facesTolerance)
 	images, err := detector.FindByPerson(args[0])
@@ -445,7 +445,7 @@ func runFacesList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	people, err := store.GetAllPeople()
 	if err != nil {
@@ -479,7 +479,7 @@ func runFacesUnlabeled(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	unlabeled, err := store.GetUnlabeledFaces()
 	if err != nil {

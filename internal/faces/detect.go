@@ -64,7 +64,7 @@ func downloadBz2(url, dst string) error {
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, url)
@@ -74,7 +74,7 @@ func downloadBz2(url, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", dst, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err = io.Copy(f, bzip2.NewReader(resp.Body)); err != nil {
 		// Remove partial file on failure

@@ -79,13 +79,13 @@ func Open(dbPath string) (*Store, error) {
 	}
 
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
 	store := &Store{db: db}
 	if err := store.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 	return store, nil
@@ -109,7 +109,7 @@ func OpenMemory() (*Store, error) {
 	}
 
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
@@ -173,7 +173,7 @@ func (s *Store) GetAllImages() ([]ImageRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying images: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var images []ImageRecord
 	for rows.Next() {
@@ -219,7 +219,7 @@ func (s *Store) GetUnscannedImages() ([]ImageRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying unscanned images: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var images []ImageRecord
 	for rows.Next() {
@@ -263,7 +263,7 @@ func (s *Store) GetAllFacesWithPerson() ([]FaceWithPerson, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying faces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []FaceWithPerson
 	for rows.Next() {
@@ -290,7 +290,7 @@ func (s *Store) GetUnlabeledFaces() ([]UnlabeledFace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying unlabeled faces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var faces []UnlabeledFace
 	for rows.Next() {
@@ -312,7 +312,7 @@ func (s *Store) GetUnlabeledFacesWithDescriptors() ([]FaceRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying unlabeled faces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var recs []FaceRecord
 	for rows.Next() {
@@ -378,7 +378,7 @@ func (s *Store) GetAllPeople() ([]PersonRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying people: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var people []PersonRecord
 	for rows.Next() {
@@ -412,7 +412,7 @@ func (s *Store) SearchByTag(tag string) ([]ImageRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("searching by tag: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var images []ImageRecord
 	for rows.Next() {
@@ -433,7 +433,7 @@ func (s *Store) GetFacesByImage(imageID int64) ([]FaceRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying faces: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var faces []FaceRecord
 	for rows.Next() {
@@ -465,7 +465,7 @@ func (s *Store) GetImagesByPerson(personID int64) ([]ImageRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying images by person: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var images []ImageRecord
 	for rows.Next() {

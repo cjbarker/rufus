@@ -70,7 +70,9 @@ func TestCrawlRecursive(t *testing.T) {
 	createTestFile(t, filepath.Join(dir, "c.txt")) // should be skipped
 
 	subdir := filepath.Join(dir, "sub")
-	os.MkdirAll(subdir, 0o755)
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	createTestFile(t, filepath.Join(subdir, "d.jpeg"))
 
 	results := Crawl(dir, true)
@@ -100,7 +102,9 @@ func TestCrawlNonRecursive(t *testing.T) {
 	createTestFile(t, filepath.Join(dir, "a.jpg"))
 
 	subdir := filepath.Join(dir, "sub")
-	os.MkdirAll(subdir, 0o755)
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	createTestFile(t, filepath.Join(subdir, "b.jpg"))
 
 	results := Crawl(dir, false)

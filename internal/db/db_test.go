@@ -10,7 +10,7 @@ func TestOpenMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenMemory failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	count, err := store.ImageCount()
 	if err != nil {
@@ -26,7 +26,7 @@ func TestInsertAndGetImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	rec := &ImageRecord{
 		FilePath: "/photos/test.jpg",
@@ -72,7 +72,7 @@ func TestInsertImageUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	rec := &ImageRecord{
 		FilePath: "/photos/test.jpg",
@@ -116,7 +116,7 @@ func TestGetImageByPathNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	got, err := store.GetImageByPath("/nonexistent.jpg")
 	if err != nil {
@@ -132,7 +132,7 @@ func TestGetAllImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	for i := 0; i < 3; i++ {
 		rec := &ImageRecord{
@@ -161,7 +161,7 @@ func TestPersonCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	id, err := store.InsertPerson("Alice")
 	if err != nil {
@@ -201,7 +201,7 @@ func TestTagOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	rec := &ImageRecord{
 		FilePath: "/photos/test.jpg",

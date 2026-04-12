@@ -96,7 +96,7 @@ func createTestImage(t *testing.T, w, h int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if err := jpeg.Encode(f, img, nil); err != nil {
 		t.Fatal(err)

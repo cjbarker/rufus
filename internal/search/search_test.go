@@ -107,7 +107,7 @@ func setupTestStore(t *testing.T) *db.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 
 	images := []*db.ImageRecord{
 		{FilePath: "/photos/sunset.jpg", FileSize: 1000, FileHash: "h1", Width: 800, Height: 600, Format: "jpeg", ModTime: time.Now()},

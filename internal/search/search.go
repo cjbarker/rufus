@@ -60,7 +60,7 @@ func (e *Engine) Search(q *Query) ([]Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []Result
 	for rows.Next() {
