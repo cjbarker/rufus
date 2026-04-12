@@ -303,6 +303,29 @@ func (s *Store) GetUnlabeledFaces() ([]UnlabeledFace, error) {
 	return faces, rows.Err()
 }
 
+// GetUnlabeledFacesWithDescriptors returns all face records with no assigned person,
+// including their descriptor blobs for re-matching against known labels.
+func (s *Store) GetUnlabeledFacesWithDescriptors() ([]FaceRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, image_id, descriptor, bounds_x, bounds_y, bounds_w, bounds_h, person_id
+		FROM faces WHERE person_id IS NULL ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying unlabeled faces: %w", err)
+	}
+	defer rows.Close()
+
+	var recs []FaceRecord
+	for rows.Next() {
+		var f FaceRecord
+		if err := rows.Scan(&f.ID, &f.ImageID, &f.Descriptor,
+			&f.BoundsX, &f.BoundsY, &f.BoundsW, &f.BoundsH, &f.PersonID); err != nil {
+			return nil, fmt.Errorf("scanning face row: %w", err)
+		}
+		recs = append(recs, f)
+	}
+	return recs, rows.Err()
+}
+
 // DeleteImage removes an image record from the database by ID.
 // The caller is responsible for deleting the actual file from the filesystem.
 func (s *Store) DeleteImage(id int64) error {

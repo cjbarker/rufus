@@ -23,7 +23,8 @@
       "Bash(make build-no-faces:*)",
       "Read(//Users/cbarker/go/pkg/mod/github.com/!kagami/**)",
       "Bash(brew --prefix jpeg-turbo)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(go vet:*)"
     ]
   }
 }
