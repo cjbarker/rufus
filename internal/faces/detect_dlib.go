@@ -26,9 +26,11 @@ func NewRecognizer(modelsDir string) (*Recognizer, error) {
 // Close releases resources held by the recognizer.
 func (r *Recognizer) Close() { r.rec.Close() }
 
-// RunDetection detects faces in imagePath using the provided recognizer.
+// RunDetection detects faces in imagePath using the CNN detector, which handles
+// non-frontal, small, and angled faces better than the HOG detector.
+// Thread-safe: concurrent calls are safe but serialize inside the dlib C++ layer.
 func RunDetection(rec *Recognizer, imagePath string) ([]Detection, error) {
-	detected, err := rec.rec.RecognizeFile(imagePath)
+	detected, err := rec.rec.RecognizeFileCNN(imagePath)
 	if err != nil {
 		return nil, fmt.Errorf("detecting faces: %w", err)
 	}

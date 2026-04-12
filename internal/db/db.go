@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,7 +23,8 @@ CREATE TABLE IF NOT EXISTS images (
     scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     ahash INTEGER DEFAULT 0,
     dhash INTEGER DEFAULT 0,
-    phash INTEGER DEFAULT 0
+    phash INTEGER DEFAULT 0,
+    face_scanned_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS people (
@@ -81,7 +83,22 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	store := &Store{db: db}
+	if err := store.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+	return store, nil
+}
+
+// migrate applies any schema changes needed for existing databases.
+func (s *Store) migrate() error {
+	// Add face_scanned_at to images if it doesn't exist (added after initial release).
+	_, err := s.db.Exec("ALTER TABLE images ADD COLUMN face_scanned_at DATETIME")
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("adding face_scanned_at column: %w", err)
+	}
+	return nil
 }
 
 // OpenMemory opens an in-memory SQLite database (useful for testing).
@@ -191,15 +208,16 @@ func (s *Store) ImageCount() (int64, error) {
 	return count, err
 }
 
-// GetImagesWithoutFaces returns all images that have not yet had face detection run on them.
-func (s *Store) GetImagesWithoutFaces() ([]ImageRecord, error) {
+// GetUnscannedImages returns all images that have not yet had face detection run on them,
+// identified by a NULL face_scanned_at timestamp.
+func (s *Store) GetUnscannedImages() ([]ImageRecord, error) {
 	rows, err := s.db.Query(`
 		SELECT id, file_path, file_size, file_hash, width, height, format, mod_time, scanned_at, ahash, dhash, phash
 		FROM images
-		WHERE NOT EXISTS (SELECT 1 FROM faces WHERE faces.image_id = images.id)
+		WHERE face_scanned_at IS NULL
 		ORDER BY file_path`)
 	if err != nil {
-		return nil, fmt.Errorf("querying unprocessed images: %w", err)
+		return nil, fmt.Errorf("querying unscanned images: %w", err)
 	}
 	defer rows.Close()
 
@@ -212,6 +230,26 @@ func (s *Store) GetImagesWithoutFaces() ([]ImageRecord, error) {
 		images = append(images, img)
 	}
 	return images, rows.Err()
+}
+
+// MarkImageFaceScanned sets face_scanned_at to the current time for the given image,
+// indicating that face detection has been run (regardless of how many faces were found).
+func (s *Store) MarkImageFaceScanned(id int64) error {
+	_, err := s.db.Exec("UPDATE images SET face_scanned_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("marking image %d as face-scanned: %w", id, err)
+	}
+	return nil
+}
+
+// DeleteFacesByImage removes all face records for a given image, used when
+// force-rescanning to avoid accumulating duplicate detections.
+func (s *Store) DeleteFacesByImage(imageID int64) error {
+	_, err := s.db.Exec("DELETE FROM faces WHERE image_id = ?", imageID)
+	if err != nil {
+		return fmt.Errorf("deleting faces for image %d: %w", imageID, err)
+	}
+	return nil
 }
 
 // GetAllFacesWithPerson returns all face records joined with their person name (if labeled).
@@ -238,6 +276,31 @@ func (s *Store) GetAllFacesWithPerson() ([]FaceWithPerson, error) {
 		results = append(results, fw)
 	}
 	return results, rows.Err()
+}
+
+// GetUnlabeledFaces returns all detected faces that have not yet been assigned a person,
+// joined with their image file path, ordered by file path then face ID.
+func (s *Store) GetUnlabeledFaces() ([]UnlabeledFace, error) {
+	rows, err := s.db.Query(`
+		SELECT f.id, i.file_path, f.bounds_x, f.bounds_y, f.bounds_w, f.bounds_h
+		FROM faces f
+		JOIN images i ON i.id = f.image_id
+		WHERE f.person_id IS NULL
+		ORDER BY i.file_path, f.id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying unlabeled faces: %w", err)
+	}
+	defer rows.Close()
+
+	var faces []UnlabeledFace
+	for rows.Next() {
+		var f UnlabeledFace
+		if err := rows.Scan(&f.FaceID, &f.FilePath, &f.BoundsX, &f.BoundsY, &f.BoundsW, &f.BoundsH); err != nil {
+			return nil, fmt.Errorf("scanning unlabeled face row: %w", err)
+		}
+		faces = append(faces, f)
+	}
+	return faces, rows.Err()
 }
 
 // DeleteImage removes an image record from the database by ID.

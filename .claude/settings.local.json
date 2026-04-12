@@ -18,7 +18,12 @@
       "Bash(./rufus faces:*)",
       "Bash(make faces-build:*)",
       "Bash(nm ./rufus)",
-      "Bash(go clean:*)"
+      "Bash(go clean:*)",
+      "Bash(make build:*)",
+      "Bash(make build-no-faces:*)",
+      "Read(//Users/cbarker/go/pkg/mod/github.com/!kagami/**)",
+      "Bash(brew --prefix jpeg-turbo)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

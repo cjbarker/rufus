@@ -50,6 +50,16 @@ type FaceWithPerson struct {
 	PersonName string
 }
 
+// UnlabeledFace is a detected face that has not yet been assigned a person name.
+type UnlabeledFace struct {
+	FaceID   int64
+	FilePath string
+	BoundsX  int
+	BoundsY  int
+	BoundsW  int
+	BoundsH  int
+}
+
 // DuplicateGroup represents a group of duplicate images.
 type DuplicateGroup struct {
 	Images   []ImageRecord
