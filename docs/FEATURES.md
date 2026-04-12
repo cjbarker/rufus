@@ -252,9 +252,31 @@ rufus import library.json
 rufus import library.csv
 ```
 
+### `info` -- Inspect an Indexed Image
+
+Display all stored metadata for a single indexed image. The image must be indexed first with `rufus scan`.
+
+```bash
+rufus info <image-path>
+```
+
+**Output includes:**
+
+- File size, resolution, and format
+- SHA-256 file hash (truncated) and perceptual hashes (aHash, dHash, pHash)
+- Last modified time, scan timestamp, and face-scan timestamp
+- All tags applied to the image
+- All detected faces with ID, person name (or "unlabeled"), and bounding-box coordinates
+
+**Example:**
+
+```bash
+rufus info ~/Photos/party.jpg
+```
+
 ### `clean` -- Remove Stale Records
 
-Removes database records for images that no longer exist on disk.
+Removes database records for images that no longer exist on disk. Before deleting a stale record, Rufus checks whether another indexed record has the same SHA-256 hash and its file is present on disk. If so, the file is treated as **moved** rather than deleted: its tags and detected faces are migrated to the live record atomically and the stale record is removed without data loss.
 
 ```bash
 rufus clean
@@ -264,16 +286,21 @@ rufus clean
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dry-run` | `false` | Preview what would be removed without deleting |
+| `--dry-run` | `false` | Preview moves and removals without making changes |
 | `--vacuum` | `false` | Run `VACUUM` after deletion to reclaim disk space |
+
+**Output sections:**
+
+- **Moved** -- files whose content was found at a new path; metadata is preserved
+- **Stale** -- files with no matching live copy; records are deleted
 
 **Examples:**
 
 ```bash
-# Preview stale records without removing them
+# Preview stale records and detected moves without making changes
 rufus clean --dry-run
 
-# Remove stale records
+# Remove stale records (migrates metadata for moved files)
 rufus clean
 
 # Remove and reclaim disk space
@@ -345,6 +372,43 @@ rufus faces list
 
 # Merge person 7 into person 3 (keeps person 3)
 rufus faces merge 3 7
+```
+
+#### `faces show`
+
+Crop the bounding box for a detected face out of its source image and open it in your default image viewer. Useful for identifying which face in a photo corresponds to a given face ID before labeling.
+
+```bash
+rufus faces show <face-id>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output` | temp file | Path to save the cropped PNG |
+| `--padding` | `40` | Pixels to add around the face bounds for context |
+| `--no-open` | `false` | Save the file but skip opening the viewer |
+
+**Examples:**
+
+```bash
+# Open face 12 in the default image viewer
+rufus faces show 12
+
+# Add extra padding around the face and save to a specific file
+rufus faces show 12 --padding 80 --output ~/Desktop/face12.png
+
+# Save only (useful in scripts or headless environments)
+rufus faces show 12 --no-open --output /tmp/face12.png
+```
+
+**Output:**
+
+```
+  Face ID   12
+  Person    Alice
+  Bounds    (120,80)–(220,180)
+  Source    /photos/party.jpg
+  Saved     /tmp/rufus-face-12.png
 ```
 
 #### `faces find`

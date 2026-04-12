@@ -8,7 +8,8 @@ Rufus crawls directories to index images, detects duplicates using perceptual ha
 
 - **Image Scanning** -- Concurrent directory crawling with worker pools to index images and compute hashes
 - **Duplicate Detection** -- Finds duplicates using perceptual hashing (aHash, dHash, pHash) and SHA-256, with configurable similarity thresholds
-- **Face Recognition** -- Detect faces in photos, label them, merge identities, and search your library by person
+- **Face Recognition** -- Detect faces in photos, label them, merge identities, search your library by person, and crop-preview individual faces
+- **Image Inspection** -- Show all stored metadata for a single indexed image: file details, hashes, tags, and detected faces
 - **Library Stats** -- Quick summary of indexed images, faces, people, tags, and database size
 - **Export / Import** -- Export the full index to JSON or CSV; import it back into any Rufus database
 - **Advanced Search** -- Filter by tags (AND/OR), face, file size, format, date range, path pattern, and face presence
@@ -106,6 +107,13 @@ make build
 ./rufus version
 ```
 
+### Inspect an Indexed Image
+
+```bash
+# Show all stored metadata for a single image (hashes, tags, detected faces)
+./rufus info ~/Photos/party.jpg
+```
+
 ### Face Detection Workflow
 
 ```bash
@@ -114,6 +122,12 @@ make build
 
 # List faces that have not been assigned a name yet
 ./rufus faces unlabeled
+
+# Crop and open a specific face in your default image viewer
+./rufus faces show 12
+
+# Crop a face with extra padding and save to a specific file
+./rufus faces show 12 --padding 60 --output ~/Desktop/face12.png
 
 # Assign a name to a face by ID
 ./rufus faces label 12 "Alice"

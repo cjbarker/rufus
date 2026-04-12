@@ -51,6 +51,14 @@ type FaceWithPerson struct {
 	PersonName string
 }
 
+// FaceWithImagePath pairs a FaceRecord with the file path of its source image
+// and the assigned person's name (empty if unlabeled). Used by faces show.
+type FaceWithImagePath struct {
+	Face       FaceRecord
+	PersonName string
+	FilePath   string
+}
+
 // UnlabeledFace is a detected face that has not yet been assigned a person name.
 type UnlabeledFace struct {
 	FaceID   int64

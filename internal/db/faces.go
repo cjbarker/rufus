@@ -151,6 +151,30 @@ func (s *Store) GetFacesByImage(imageID int64) ([]FaceRecord, error) {
 	return faces, rows.Err()
 }
 
+// GetFaceByID returns a single face record joined with its source image path
+// and assigned person name, or nil if no face with that ID exists.
+func (s *Store) GetFaceByID(id int64) (*FaceWithImagePath, error) {
+	var fw FaceWithImagePath
+	err := s.db.QueryRow(`
+		SELECT f.id, f.image_id, f.descriptor, f.bounds_x, f.bounds_y, f.bounds_w, f.bounds_h,
+		       f.person_id, COALESCE(p.name, '') as person_name, i.file_path
+		FROM faces f
+		JOIN images i ON i.id = f.image_id
+		LEFT JOIN people p ON p.id = f.person_id
+		WHERE f.id = ?`, id).Scan(
+		&fw.Face.ID, &fw.Face.ImageID, &fw.Face.Descriptor,
+		&fw.Face.BoundsX, &fw.Face.BoundsY, &fw.Face.BoundsW, &fw.Face.BoundsH,
+		&fw.Face.PersonID, &fw.PersonName, &fw.FilePath,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying face %d: %w", id, err)
+	}
+	return &fw, nil
+}
+
 // GetFacesWithPersonByImage returns all face records for the given image,
 // joined with their assigned person name (empty string when unlabeled).
 func (s *Store) GetFacesWithPersonByImage(imageID int64) ([]FaceWithPerson, error) {
