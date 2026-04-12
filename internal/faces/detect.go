@@ -27,15 +27,15 @@ var dlibModels = []struct {
 }{
 	{
 		"mmod_human_face_detector.dat",
-		"http://dlib.net/files/mmod_human_face_detector.dat.bz2",
+		"https://dlib.net/files/mmod_human_face_detector.dat.bz2",
 	},
 	{
 		"shape_predictor_5_face_landmarks.dat",
-		"http://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2",
+		"https://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2",
 	},
 	{
 		"dlib_face_recognition_resnet_model_v1.dat",
-		"http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2",
+		"https://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2",
 	},
 }
 
@@ -60,7 +60,7 @@ func EnsureModels(modelsDir string, progress func(string)) error {
 }
 
 func downloadBz2(url, dst string) error {
-	resp, err := http.Get(url) //nolint:gosec // URL is a compile-time constant
+	resp, err := http.Get(url) //nolint:noctx // URL is a compile-time HTTPS constant; no context needed for one-shot download
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", url, err)
 	}

@@ -4,18 +4,19 @@ import "time"
 
 // ImageRecord represents an indexed image in the database.
 type ImageRecord struct {
-	ID       int64
-	FilePath string
-	FileSize int64
-	FileHash string // SHA-256 hex
-	Width    int
-	Height   int
-	Format   string
-	ModTime  time.Time
-	ScannedAt time.Time
-	AHash    uint64
-	DHash    uint64
-	PHash    uint64
+	ID           int64
+	FilePath     string
+	FileSize     int64
+	FileHash     string // SHA-256 hex
+	Width        int
+	Height       int
+	Format       string
+	ModTime      time.Time
+	ScannedAt    time.Time
+	AHash        uint64
+	DHash        uint64
+	PHash        uint64
+	FaceScannedAt *time.Time // nil when face detection has not yet run
 }
 
 // FaceRecord represents a detected face in an image.

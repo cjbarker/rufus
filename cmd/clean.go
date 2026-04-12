@@ -11,6 +11,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// moveCandidate pairs a stale record with the live record it was moved to.
+type moveCandidate struct {
+	old db.ImageRecord
+	new db.ImageRecord
+}
+
 var (
 	cleanDryRun bool
 	cleanVacuum bool
@@ -109,24 +115,96 @@ func runClean(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println()
-	ui.SectionHeader(fmt.Sprintf("%d stale index entry/entries", len(stale)))
+	// Detect moves: for each stale record, check if another DB record with the
+	// same SHA-256 hash exists and its file is present on disk.
+	var moved []moveCandidate
+	var trulyStale []db.ImageRecord
+
+	for _, img := range stale {
+		candidates, err := store.GetImagesByHash(img.FileHash)
+		if err != nil {
+			// Non-fatal — treat as stale if hash lookup fails.
+			trulyStale = append(trulyStale, img)
+			continue
+		}
+
+		var liveMatch *db.ImageRecord
+		for i := range candidates {
+			if candidates[i].ID == img.ID {
+				continue // skip the stale record itself
+			}
+			if _, statErr := os.Stat(candidates[i].FilePath); statErr == nil {
+				liveMatch = &candidates[i]
+				break
+			}
+		}
+
+		if liveMatch != nil {
+			moved = append(moved, moveCandidate{old: img, new: *liveMatch})
+		} else {
+			trulyStale = append(trulyStale, img)
+		}
+	}
+
 	fmt.Println()
 
-	tbl := ui.NewTable("PATH")
-	for _, img := range stale {
-		tbl.AddRow(ui.Dim.Render(img.FilePath))
+	// Display moved files.
+	if len(moved) > 0 {
+		ui.SectionHeader(fmt.Sprintf("%d moved — metadata will be preserved", len(moved)))
+		fmt.Println()
+		tbl := ui.NewTable("OLD PATH", "NEW PATH")
+		for _, m := range moved {
+			tbl.AddRow(ui.Dim.Render(m.old.FilePath), ui.FileLink(m.new.FilePath))
+		}
+		tbl.Render()
+		fmt.Println()
 	}
-	tbl.Render()
-	fmt.Println()
+
+	// Display truly stale files.
+	if len(trulyStale) > 0 {
+		ui.SectionHeader(fmt.Sprintf("%d stale — file missing from disk", len(trulyStale)))
+		fmt.Println()
+		tbl := ui.NewTable("PATH")
+		for _, img := range trulyStale {
+			tbl.AddRow(ui.Dim.Render(img.FilePath))
+		}
+		tbl.Render()
+		fmt.Println()
+	}
 
 	if cleanDryRun {
-		ui.InfoMessage(fmt.Sprintf("Dry run: %d record(s) would be removed. Re-run without --dry-run to apply.", len(stale)))
+		parts := []string{}
+		if len(moved) > 0 {
+			parts = append(parts, fmt.Sprintf("%d moved (metadata migration)", len(moved)))
+		}
+		if len(trulyStale) > 0 {
+			parts = append(parts, fmt.Sprintf("%d removed", len(trulyStale)))
+		}
+		msg := "Dry run"
+		for i, p := range parts {
+			if i == 0 {
+				msg += ": " + p
+			} else {
+				msg += ", " + p
+			}
+		}
+		msg += ". Re-run without --dry-run to apply."
+		ui.InfoMessage(msg)
 		return nil
 	}
 
+	// Apply: migrate moved records, delete stale records.
+	migrated := 0
+	for _, m := range moved {
+		if err := store.MigrateImageMetadata(m.old.ID, m.new.ID); err != nil {
+			ui.ErrorMessage(fmt.Sprintf("Failed to migrate %s: %v", m.old.FilePath, err))
+			continue
+		}
+		migrated++
+	}
+
 	removed := 0
-	for _, img := range stale {
+	for _, img := range trulyStale {
 		if err := store.DeleteImage(img.ID); err != nil {
 			ui.ErrorMessage(fmt.Sprintf("Failed to remove %s: %v", img.FilePath, err))
 			continue
@@ -134,9 +212,15 @@ func runClean(cmd *cobra.Command, args []string) error {
 		removed++
 	}
 
-	ui.SuccessMessage(fmt.Sprintf("Removed %d stale record(s) from the index.", removed))
+	if migrated > 0 {
+		ui.SuccessMessage(fmt.Sprintf("Migrated metadata for %d moved file(s).", migrated))
+	}
+	if removed > 0 {
+		ui.SuccessMessage(fmt.Sprintf("Removed %d stale record(s) from the index.", removed))
+	}
 
-	if cleanVacuum && removed > 0 {
+	total := migrated + removed
+	if cleanVacuum && total > 0 {
 		spinner := ui.NewSpinner("Vacuuming database...")
 		spinner.Start()
 		if err := store.Vacuum(); err != nil {

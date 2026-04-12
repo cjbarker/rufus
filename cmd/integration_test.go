@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"image"
 	"image/jpeg"
 	"os"
@@ -447,5 +448,484 @@ func TestIntegrationVersion(t *testing.T) {
 	resetState(t)
 	if err := execute(t, "version", "--quiet"); err != nil {
 		t.Errorf("version failed: %v", err)
+	}
+}
+
+// ─── Faces integration tests ─────────────────────────────────────────────────
+//
+// These tests exercise the faces subcommand routing and DB interactions using
+// the stub build (no dlib). Face records are seeded directly via db.Open so
+// the label/unlabel/merge/find paths can be covered without real detection.
+
+func TestIntegrationFacesDetect(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+	makeIntegrationJPEG(t, dir, "a.jpg", 100, 100)
+
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	// Stub binary: DlibAvailable() returns false, so detect prints an info
+	// message and returns nil — no error expected.
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "detect"); err != nil {
+		t.Errorf("faces detect failed: %v", err)
+	}
+}
+
+func TestIntegrationFacesList(t *testing.T) {
+	dbPath := resetState(t)
+	// Empty database — should print "no people" message without error.
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "list"); err != nil {
+		t.Errorf("faces list (empty) failed: %v", err)
+	}
+}
+
+func TestIntegrationFacesUnlabeled(t *testing.T) {
+	dbPath := resetState(t)
+	// Empty database — should print "no unlabeled faces" message without error.
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "unlabeled"); err != nil {
+		t.Errorf("faces unlabeled (empty) failed: %v", err)
+	}
+}
+
+// seedFace inserts an image + bare face record into the database and returns the face ID.
+func seedFace(t *testing.T, dbPath string) (faceID int64) {
+	t.Helper()
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	imgID, err := store.InsertImage(&db.ImageRecord{
+		FilePath: "/tmp/integration_test.jpg",
+		FileSize: 1000,
+		FileHash: "testhash",
+		Width:    100,
+		Height:   100,
+		Format:   "jpeg",
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Descriptor: 128 float64 values encoded as 1024 zero bytes.
+	faceID, err = store.InsertFace(&db.FaceRecord{
+		ImageID:    imgID,
+		Descriptor: make([]byte, 128*8),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return faceID
+}
+
+func TestIntegrationFacesLabel(t *testing.T) {
+	dbPath := resetState(t)
+	faceID := seedFace(t, dbPath)
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "label",
+		fmt.Sprintf("%d", faceID), "Alice"); err != nil {
+		t.Fatalf("faces label failed: %v", err)
+	}
+
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	person, err := store.GetPersonByName("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if person == nil {
+		t.Error("expected person 'Alice' to be created by faces label")
+	}
+}
+
+func TestIntegrationFacesUnlabel(t *testing.T) {
+	dbPath := resetState(t)
+	faceID := seedFace(t, dbPath)
+
+	// Label first.
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "label",
+		fmt.Sprintf("%d", faceID), "Bob"); err != nil {
+		t.Fatalf("faces label failed: %v", err)
+	}
+
+	// Then unlabel.
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "unlabel",
+		fmt.Sprintf("%d", faceID)); err != nil {
+		t.Errorf("faces unlabel failed: %v", err)
+	}
+
+	// Verify the face appears in the unlabeled list again.
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	unlabeled, err := store.GetUnlabeledFaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, u := range unlabeled {
+		if u.FaceID == faceID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("face %d should be unlabeled after 'faces unlabel'", faceID)
+	}
+}
+
+func TestIntegrationFacesMerge(t *testing.T) {
+	dbPath := resetState(t)
+
+	// Insert two people directly.
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keepID, err := store.InsertPerson("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeID, err := store.InsertPerson("Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if mergeErr := execute(t, "faces", "--db", dbPath, "--quiet", "merge",
+		fmt.Sprintf("%d", keepID), fmt.Sprintf("%d", mergeID)); mergeErr != nil {
+		t.Fatalf("faces merge failed: %v", mergeErr)
+	}
+
+	store, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	people, err := store.GetAllPeople()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(people) != 1 {
+		t.Errorf("expected 1 person after merge, got %d", len(people))
+	}
+	if len(people) == 1 && people[0].Name != "Alice" {
+		t.Errorf("expected 'Alice' to survive merge, got %q", people[0].Name)
+	}
+}
+
+func TestIntegrationFacesFind(t *testing.T) {
+	dbPath := resetState(t)
+
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgID, err := store.InsertImage(&db.ImageRecord{
+		FilePath: "/tmp/alice_photo.jpg",
+		FileSize: 1000,
+		FileHash: "hash_alice",
+		Width:    100,
+		Height:   100,
+		Format:   "jpeg",
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	personID, err := store.InsertPerson("Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertFace(&db.FaceRecord{
+		ImageID:    imgID,
+		Descriptor: make([]byte, 128*8),
+		PersonID:   &personID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "faces", "--db", dbPath, "--quiet", "find", "Alice"); err != nil {
+		t.Errorf("faces find failed: %v", err)
+	}
+}
+
+// ─── Tag integration tests ────────────────────────────────────────────────────
+
+func TestIntegrationTagAdd(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+	path := makeIntegrationJPEG(t, dir, "photo.jpg", 100, 100)
+
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "tag", "--db", dbPath, "--quiet", "add", path, "landscape", "nature"); err != nil {
+		t.Fatalf("tag add failed: %v", err)
+	}
+
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	img, err := store.GetImageByPath(path)
+	if err != nil || img == nil {
+		t.Fatalf("image not found: %v", err)
+	}
+	tags, err := store.GetTagsForImage(img.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"landscape": true, "nature": true}
+	for _, tag := range tags {
+		delete(want, tag)
+	}
+	if len(want) > 0 {
+		t.Errorf("missing tags after add: %v", want)
+	}
+}
+
+func TestIntegrationTagRemove(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+	path := makeIntegrationJPEG(t, dir, "photo.jpg", 100, 100)
+
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "tag", "--db", dbPath, "--quiet", "add", path, "landscape", "nature"); err != nil {
+		t.Fatalf("tag add failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "tag", "--db", dbPath, "--quiet", "remove", path, "landscape"); err != nil {
+		t.Fatalf("tag remove failed: %v", err)
+	}
+
+	store, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	img, _ := store.GetImageByPath(path)
+	tags, _ := store.GetTagsForImage(img.ID)
+	for _, tag := range tags {
+		if tag == "landscape" {
+			t.Error("expected 'landscape' to be removed")
+		}
+	}
+	found := false
+	for _, tag := range tags {
+		if tag == "nature" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'nature' to remain after partial remove")
+	}
+}
+
+func TestIntegrationTagList(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+	path := makeIntegrationJPEG(t, dir, "photo.jpg", 100, 100)
+
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "tag", "--db", dbPath, "--quiet", "add", path, "sunset"); err != nil {
+		t.Fatalf("tag add failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "tag", "--db", dbPath, "--quiet", "list", path); err != nil {
+		t.Errorf("tag list failed: %v", err)
+	}
+}
+
+func TestIntegrationTagAddUnindexed(t *testing.T) {
+	dbPath := resetState(t)
+
+	// Attempt to tag an image that was never scanned — should fail clearly.
+	resetState(t)
+	cfg.DBPath = dbPath
+	err := execute(t, "tag", "--db", dbPath, "--quiet", "add", "/nonexistent/photo.jpg", "test")
+	if err == nil {
+		t.Error("expected error when tagging an unindexed image, got nil")
+	}
+}
+
+// ─── info tests ───────────────────────────────────────────────────────────────
+
+func TestIntegrationInfo(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+	path := makeIntegrationJPEG(t, dir, "photo.jpg", 120, 80)
+
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	resetState(t)
+	cfg.DBPath = dbPath
+	if err := execute(t, "info", "--db", dbPath, path); err != nil {
+		t.Errorf("info failed: %v", err)
+	}
+}
+
+func TestIntegrationInfoUnindexed(t *testing.T) {
+	dbPath := resetState(t)
+	cfg.DBPath = dbPath
+
+	err := execute(t, "info", "--db", dbPath, "/nonexistent/photo.jpg")
+	if err == nil {
+		t.Error("expected error for unindexed path, got nil")
+	}
+}
+
+// ─── clean move-detection tests ───────────────────────────────────────────────
+
+// seedImageWithHash inserts an image record with a specific file hash and
+// returns its ID. The filePath need not exist on disk.
+func seedImageWithHash(t *testing.T, store *db.Store, filePath, fileHash string) int64 {
+	t.Helper()
+	id, err := store.InsertImage(&db.ImageRecord{
+		FilePath: filePath,
+		FileSize: 1000,
+		FileHash: fileHash,
+		Width:    100,
+		Height:   100,
+		Format:   "jpeg",
+		ModTime:  time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("inserting image %s: %v", filePath, err)
+	}
+	return id
+}
+
+func TestIntegrationCleanDetectMove(t *testing.T) {
+	dbPath := resetState(t)
+	dir := t.TempDir()
+
+	// Create a real JPEG on disk at the "new" location.
+	newPath := makeIntegrationJPEG(t, dir, "moved.jpg", 100, 100)
+
+	// Scan the new path so Rufus has a DB record for it (with a real hash).
+	if err := execute(t, "scan", "--db", dbPath, "--quiet", dir); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	// Retrieve the hash that scan computed, then seed the stale record.
+	var realHash string
+	var newID int64
+	oldPath := filepath.Join(dir, "old_location", "moved.jpg")
+	func() {
+		store, openErr := db.Open(dbPath)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		defer func() { _ = store.Close() }()
+
+		img, queryErr := store.GetImageByPath(newPath)
+		if queryErr != nil || img == nil {
+			t.Fatalf("image not found after scan: %v", queryErr)
+		}
+		realHash = img.FileHash
+		newID = img.ID
+
+		// Seed a "stale" record at an old path with the same hash and add a tag.
+		oldID := seedImageWithHash(t, store, oldPath, realHash)
+		if tagErr := store.InsertTag(oldID, "vacation"); tagErr != nil {
+			t.Fatalf("inserting tag: %v", tagErr)
+		}
+	}()
+
+	// Run clean — old path doesn't exist on disk, new path does.
+	resetState(t)
+	cfg.DBPath = dbPath
+	cleanDryRun = false
+	cleanVacuum = false
+	if err := execute(t, "clean", "--db", dbPath); err != nil {
+		t.Fatalf("clean failed: %v", err)
+	}
+
+	// Old record should be gone; new record should have the migrated tag.
+	store2, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store2.Close() }()
+
+	// Old record must be deleted.
+	byPath, err := store2.GetImageByPath(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byPath != nil {
+		t.Error("old record should have been removed after move detection")
+	}
+
+	// New record must still exist.
+	byNew, err := store2.GetImageByPath(newPath)
+	if err != nil || byNew == nil {
+		t.Fatalf("new record missing after clean: %v", err)
+	}
+	if byNew.ID != newID {
+		t.Errorf("new record ID changed unexpectedly: got %d, want %d", byNew.ID, newID)
+	}
+
+	// Tag "vacation" must have been migrated to the new record.
+	tags, err := store2.GetTagsForImage(newID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tg := range tags {
+		if tg == "vacation" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("tag 'vacation' was not migrated to new record; tags: %v", tags)
 	}
 }

@@ -52,7 +52,7 @@ across your photo library.`,
 		}
 		ui.SetQuiet(cfg.Quiet)
 		ui.SetNoColor(cfg.NoColor)
-		return nil
+		return cfg.Validate()
 	},
 }
 

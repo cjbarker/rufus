@@ -29,3 +29,45 @@ func TestDefaultDBPath(t *testing.T) {
 		t.Errorf("DBPath should contain .rufus directory, got %q", path)
 	}
 }
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{
+			name:    "valid default config",
+			cfg:     Config{DBPath: "/tmp/test.db", Workers: 4},
+			wantErr: false,
+		},
+		{
+			name:    "empty DBPath",
+			cfg:     Config{DBPath: "", Workers: 4},
+			wantErr: true,
+		},
+		{
+			name:    "zero workers",
+			cfg:     Config{DBPath: "/tmp/test.db", Workers: 0},
+			wantErr: true,
+		},
+		{
+			name:    "negative workers",
+			cfg:     Config{DBPath: "/tmp/test.db", Workers: -1},
+			wantErr: true,
+		},
+		{
+			name:    "single worker is valid",
+			cfg:     Config{DBPath: "/tmp/test.db", Workers: 1},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

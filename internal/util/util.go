@@ -28,8 +28,12 @@ func FormatSize(bytes int64) string {
 }
 
 // ParseSize converts a size string to a byte count. Accepts a plain integer
-// (bytes) or a value with a decimal unit suffix: B, MB, GB, TB
-// (e.g. "4.3MB" → 4_300_000). Empty string returns 0.
+// (bytes) or a value with a binary unit suffix: B, KB, MB, GB, TB
+// (KB = 1024, MB = 1024², GB = 1024³, TB = 1024⁴).
+// Examples: "512", "1.5KB", "4.3MB", "2GB". Empty string returns 0.
+//
+// Units match FormatSize output so that a value displayed by rufus can be fed
+// back in as a filter without a mismatch.
 func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -42,13 +46,20 @@ func ParseSize(s string) (int64, error) {
 	}
 
 	// Unit suffixes, longest first so "GB" is not matched by "B".
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+		tb = gb * 1024
+	)
 	units := []struct {
 		suffix string
 		factor int64
 	}{
-		{"TB", 1_000_000_000_000},
-		{"GB", 1_000_000_000},
-		{"MB", 1_000_000},
+		{"TB", tb},
+		{"GB", gb},
+		{"MB", mb},
+		{"KB", kb},
 		{"B", 1},
 	}
 
@@ -64,5 +75,5 @@ func ParseSize(s string) (int64, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("invalid size %q: use a number in bytes or a value like 4.3MB, 1.5GB, 2TB", s)
+	return 0, fmt.Errorf("invalid size %q: use a number in bytes or a value like 1.5KB, 4.3MB, 2GB, 1TB", s)
 }

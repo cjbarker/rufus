@@ -193,7 +193,7 @@ func buildWhere(q *Query) (sqlClause string, sqlArgs []any) {
 	}
 
 	if q.PathPattern != "" {
-		conditions = append(conditions, "i.file_path LIKE ?")
+		conditions = append(conditions, "LOWER(i.file_path) LIKE LOWER(?)")
 		args = append(args, "%"+q.PathPattern+"%")
 	}
 

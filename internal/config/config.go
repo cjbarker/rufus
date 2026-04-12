@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -94,6 +95,18 @@ func ApplyEnv(dst *Config) {
 	if v := os.Getenv("RUFUS_NO_COLOR"); v != "" {
 		dst.NoColor = isTruthy(v)
 	}
+}
+
+// Validate checks that the configuration values are within acceptable bounds.
+// Call after all layers (file, env, CLI flags) have been applied.
+func (c *Config) Validate() error {
+	if c.DBPath == "" {
+		return fmt.Errorf("db path must not be empty")
+	}
+	if c.Workers < 1 {
+		return fmt.Errorf("workers must be at least 1, got %d", c.Workers)
+	}
+	return nil
 }
 
 func isTruthy(s string) bool {

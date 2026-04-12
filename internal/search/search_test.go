@@ -62,6 +62,29 @@ func TestSearchByPath(t *testing.T) {
 	}
 }
 
+func TestSearchByPathCaseInsensitive(t *testing.T) {
+	store := setupTestStore(t)
+
+	engine := NewEngine(store)
+	// "PHOTOS" should match paths containing "photos" (lowercase on disk).
+	results, err := engine.Search(&Query{PathPattern: "PHOTOS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results for upper-case path pattern, got %d", len(results))
+	}
+
+	// Mixed case should also work.
+	results, err = engine.Search(&Query{PathPattern: "Photos"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results for mixed-case path pattern, got %d", len(results))
+	}
+}
+
 func TestSearchByTag(t *testing.T) {
 	store := setupTestStore(t)
 

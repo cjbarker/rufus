@@ -4,6 +4,29 @@ import (
 	"testing"
 )
 
+// TestFormatParseRoundTrip verifies that values emitted by FormatSize can be
+// fed back into ParseSize without a unit-scale mismatch.
+func TestFormatParseRoundTrip(t *testing.T) {
+	inputs := []int64{512, 1024, 1536, 1024 * 1024, 4_509_450, 1024 * 1024 * 1024}
+	for _, original := range inputs {
+		formatted := FormatSize(original)
+		parsed, err := ParseSize(formatted)
+		if err != nil {
+			t.Errorf("ParseSize(%q) error: %v", formatted, err)
+			continue
+		}
+		// Allow ±1% tolerance for float rounding in the formatted string.
+		delta := original - parsed
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta > original/100+1 {
+			t.Errorf("round-trip mismatch for %d bytes: FormatSize=%q, ParseSize=%d (delta %d)",
+				original, formatted, parsed, delta)
+		}
+	}
+}
+
 func TestFormatSize(t *testing.T) {
 	tests := []struct {
 		bytes int64
@@ -39,10 +62,12 @@ func TestParseSize(t *testing.T) {
 		{"500", 500, false},
 		{"1024", 1024, false},
 		{"500B", 500, false},
-		{"4MB", 4_000_000, false},
-		{"4.3MB", 4_300_000, false},
-		{"1.5GB", 1_500_000_000, false},
-		{"2TB", 2_000_000_000_000, false},
+		{"1KB", 1024, false},
+		{"1.5KB", 1536, false},         // 1.5 × 1024
+		{"4MB", 4_194_304, false},      // 4 × 1024²
+		{"4.3MB", 4_508_876, false},    // int64(4.3 × 1024²)
+		{"1.5GB", 1_610_612_736, false}, // int64(1.5 × 1024³)
+		{"2TB", 2_199_023_255_552, false}, // 2 × 1024⁴
 		{"bad", 0, true},
 		{"-1MB", 0, true},
 		{"1.2.3MB", 0, true},

@@ -123,12 +123,11 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading known faces: %w", err)
 	}
 
-	knownLabeledCount := 0
-	for _, kf := range knownFaces {
-		if kf.PersonName != "" {
-			knownLabeledCount++
-		}
-	}
+	// Pre-decode all labeled face descriptors once. This avoids re-decoding the
+	// same descriptor bytes on every matchKnownFace call (O(m) decodes instead
+	// of O(n×m) across n detected faces and m known labeled faces).
+	faceCache := buildFaceCache(knownFaces)
+	knownLabeledCount := len(faceCache)
 
 	// Early exit only when there's nothing new to detect and no labels to propagate.
 	if len(images) == 0 && knownLabeledCount == 0 {
@@ -256,8 +255,10 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 					ui.ErrorMessage(fmt.Sprintf("    error: %v", result.err))
 				}
 				errs++
-				// Mark as scanned so a bad file doesn't block every future run.
-				_ = store.MarkImageFaceScanned(img.ID)
+				// Do NOT mark as scanned — let the image be retried on the next
+				// run so transient errors (locked file, network model download,
+				// etc.) recover automatically. Use --force to re-scan images that
+				// were already successfully processed.
 				continue
 			}
 
@@ -279,7 +280,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 					Descriptor: faces.EncodeDescriptor(d.Descriptor),
 				}
 
-				if personID, name := matchKnownFace(d.Descriptor, knownFaces, facesTolerance); personID > 0 {
+				if personID, name := matchKnownFace(d.Descriptor, faceCache, facesTolerance); personID > 0 {
 					faceRec.PersonID = &personID
 					if cfg.Verbose {
 						fmt.Printf("    %s\n", ui.InfoStyle.Render(fmt.Sprintf("→ matched %q", name)))
@@ -337,7 +338,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					return nil // skip corrupted descriptor, continue walk
 				}
-				personID, name := matchKnownFace(desc, knownFaces, facesTolerance)
+				personID, name := matchKnownFace(desc, faceCache, facesTolerance)
 				if personID == 0 {
 					return nil
 				}
@@ -371,6 +372,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 	}
 	if errs > 0 {
 		ui.StatusLine("Errors", fmt.Sprintf("%d", errs))
+		ui.InfoMessage("Images that errored were not marked as scanned and will be retried on the next run.")
 	}
 	fmt.Println()
 
@@ -383,29 +385,53 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// matchKnownFace returns the personID and name of the closest labeled face
-// within the given tolerance, or (0, "") if no match is found.
-func matchKnownFace(descriptor []float64, known []db.FaceWithPerson, tolerance float64) (personID int64, personName string) {
-	best := tolerance
-	var bestID int64
-	var bestName string
+// cachedFace holds a pre-decoded face descriptor alongside its identity so
+// that descriptor bytes are decoded once rather than on every matchKnownFace call.
+type cachedFace struct {
+	personID   int64
+	personName string
+	desc       []float64
+}
 
+// buildFaceCache decodes descriptors for all labeled faces, skipping any with
+// corrupt or missing descriptors. The cache is built once before the detection
+// loop to avoid O(n×m) redundant decode work.
+func buildFaceCache(known []db.FaceWithPerson) []cachedFace {
+	cache := make([]cachedFace, 0, len(known))
 	for _, kf := range known {
 		if kf.PersonName == "" || kf.Face.PersonID == nil {
 			continue
 		}
-		kDesc, err := faces.DecodeDescriptor(kf.Face.Descriptor)
+		desc, err := faces.DecodeDescriptor(kf.Face.Descriptor)
 		if err != nil {
 			continue
 		}
-		dist, err := faces.EuclideanDistance(descriptor, kDesc)
+		cache = append(cache, cachedFace{
+			personID:   *kf.Face.PersonID,
+			personName: kf.PersonName,
+			desc:       desc,
+		})
+	}
+	return cache
+}
+
+// matchKnownFace returns the personID and name of the closest labeled face
+// within the given tolerance, or (0, "") if no match is found.
+// It operates on pre-decoded descriptors from buildFaceCache.
+func matchKnownFace(descriptor []float64, cache []cachedFace, tolerance float64) (personID int64, personName string) {
+	best := tolerance
+	var bestID int64
+	var bestName string
+
+	for _, cf := range cache {
+		dist, err := faces.EuclideanDistance(descriptor, cf.desc)
 		if err != nil {
 			continue
 		}
 		if dist < best {
 			best = dist
-			bestID = *kf.Face.PersonID
-			bestName = kf.PersonName
+			bestID = cf.personID
+			bestName = cf.personName
 		}
 	}
 	return bestID, bestName
