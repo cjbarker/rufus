@@ -1,6 +1,7 @@
 package db
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -193,6 +194,65 @@ func TestPersonCRUD(t *testing.T) {
 	}
 	if len(people) != 1 {
 		t.Errorf("expected 1 person, got %d", len(people))
+	}
+}
+
+// TestHashRoundTrip verifies that perceptual hashes with the high bit set
+// (values > math.MaxInt64) survive a write-then-read cycle through SQLite
+// without corruption. This guards against silent sign-extension bugs.
+func TestHashRoundTrip(t *testing.T) {
+	store, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	highBit := uint64(math.MaxInt64) + 1 // 0x8000000000000000 — high bit set
+	allOnes := uint64(math.MaxUint64)     // 0xFFFFFFFFFFFFFFFF
+
+	rec := &ImageRecord{
+		FilePath: "/hash-test.jpg",
+		FileSize: 1,
+		FileHash: "abc",
+		Format:   "jpeg",
+		ModTime:  time.Now(),
+		AHash:    highBit,
+		DHash:    allOnes,
+		PHash:    highBit ^ 0xDEADBEEF,
+	}
+	if _, insertErr := store.InsertImage(rec); insertErr != nil {
+		t.Fatalf("InsertImage: %v", insertErr)
+	}
+
+	got, err := store.GetImageByPath("/hash-test.jpg")
+	if err != nil {
+		t.Fatalf("GetImageByPath: %v", err)
+	}
+	if got.AHash != highBit {
+		t.Errorf("AHash round-trip: got %d, want %d", got.AHash, highBit)
+	}
+	if got.DHash != allOnes {
+		t.Errorf("DHash round-trip: got %d, want %d", got.DHash, allOnes)
+	}
+	if got.PHash != highBit^0xDEADBEEF {
+		t.Errorf("PHash round-trip: got %d, want %d", got.PHash, highBit^0xDEADBEEF)
+	}
+}
+
+func TestMigrationsTable(t *testing.T) {
+	store, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// After open, schema_migrations must exist.
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("schema_migrations table not found: %v", err)
+	}
+	if count != len(dbMigrations) {
+		t.Errorf("expected %d migration record(s), got %d", len(dbMigrations), count)
 	}
 }
 

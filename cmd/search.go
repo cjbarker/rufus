@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/search"
 	"github.com/cjbarker/rufus/internal/ui"
+	"github.com/cjbarker/rufus/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -68,11 +67,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	minSize, err := parseSize(searchMinSizeStr)
+	minSize, err := util.ParseSize(searchMinSizeStr)
 	if err != nil {
 		return fmt.Errorf("invalid --min-size: %w", err)
 	}
-	maxSize, err := parseSize(searchMaxSizeStr)
+	maxSize, err := util.ParseSize(searchMaxSizeStr)
 	if err != nil {
 		return fmt.Errorf("invalid --max-size: %w", err)
 	}
@@ -146,7 +145,7 @@ func outputSearchTable(results []search.Result) error {
 		img := r.Image
 		tbl.AddRow(
 			ui.FileLink(img.FilePath),
-			ui.SizeStyle.Render(formatSize(img.FileSize)),
+			ui.SizeStyle.Render(util.FormatSize(img.FileSize)),
 			fmt.Sprintf("%dx%d", img.Width, img.Height),
 			ui.FormatStyle.Render(img.Format),
 		)
@@ -180,42 +179,3 @@ func outputSearchJSON(results []search.Result) error {
 	return enc.Encode(output)
 }
 
-// parseSize converts a size string to bytes. Accepts a plain integer (bytes)
-// or a value with a unit suffix: B, MB, GB, TB using decimal multipliers
-// (e.g. "4.3MB" → 4300000, "1.5GB" → 1500000000). Empty string returns 0.
-func parseSize(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, nil
-	}
-
-	// Plain integer — treat as bytes directly.
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return n, nil
-	}
-
-	// Unit suffixes, longest first so "GB" is not matched by "B".
-	units := []struct {
-		suffix string
-		factor int64
-	}{
-		{"TB", 1_000_000_000_000},
-		{"GB", 1_000_000_000},
-		{"MB", 1_000_000},
-		{"B", 1},
-	}
-
-	upper := strings.ToUpper(s)
-	for _, u := range units {
-		if strings.HasSuffix(upper, u.suffix) {
-			numStr := strings.TrimSpace(strings.TrimSuffix(upper, u.suffix))
-			f, err := strconv.ParseFloat(numStr, 64)
-			if err != nil || f < 0 {
-				return 0, fmt.Errorf("invalid size %q", s)
-			}
-			return int64(f * float64(u.factor)), nil
-		}
-	}
-
-	return 0, fmt.Errorf("invalid size %q: use a number in bytes or a value like 4.3MB, 1.5GB, 2TB", s)
-}

@@ -9,6 +9,7 @@ import (
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/duplicates"
 	"github.com/cjbarker/rufus/internal/ui"
+	"github.com/cjbarker/rufus/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -130,7 +131,7 @@ func outputDupesTable(groups []duplicates.Group, store *db.Store, autoYes bool) 
 				badge = ui.KeepBadge
 			}
 			meta := fmt.Sprintf("%s   %s   %s",
-				ui.SizeStyle.Render(formatSize(img.FileSize)),
+				ui.SizeStyle.Render(util.FormatSize(img.FileSize)),
 				ui.Dim.Render(fmt.Sprintf("%dx%d", img.Width, img.Height)),
 				ui.FormatStyle.Render(img.Format),
 			)
@@ -249,20 +250,3 @@ func outputDupesCSV(groups []duplicates.Group) error {
 	return nil
 }
 
-func formatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(KB))
-	default:
-		return fmt.Sprintf("%dB", bytes)
-	}
-}

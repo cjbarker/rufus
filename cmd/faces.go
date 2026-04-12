@@ -9,6 +9,7 @@ import (
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/faces"
 	"github.com/cjbarker/rufus/internal/ui"
+	"github.com/cjbarker/rufus/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -460,7 +461,7 @@ func runFacesFind(cmd *cobra.Command, args []string) error {
 	for _, img := range images {
 		tbl.AddRow(
 			ui.FileLink(img.FilePath),
-			ui.SizeStyle.Render(formatSize(img.FileSize)),
+			ui.SizeStyle.Render(util.FormatSize(img.FileSize)),
 			fmt.Sprintf("%dx%d", img.Width, img.Height),
 		)
 	}

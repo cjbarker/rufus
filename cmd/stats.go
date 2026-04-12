@@ -5,6 +5,7 @@ import (
 
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/ui"
+	"github.com/cjbarker/rufus/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -41,7 +42,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	ui.StatusLine("Database", cfg.DBPath)
 	if stats.DBSizeBytes > 0 {
-		ui.StatusLine("Size", formatSize(stats.DBSizeBytes))
+		ui.StatusLine("Size", util.FormatSize(stats.DBSizeBytes))
 	}
 	fmt.Println()
 	ui.StatusLine("Images", fmt.Sprintf("%d", stats.Images))

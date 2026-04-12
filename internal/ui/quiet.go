@@ -15,6 +15,6 @@ func IsQuiet() bool { return quietMode }
 // variable, which is respected by lipgloss and termenv at render time.
 func SetNoColor(nc bool) {
 	if nc {
-		os.Setenv("NO_COLOR", "1")
+		_ = os.Setenv("NO_COLOR", "1")
 	}
 }

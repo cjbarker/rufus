@@ -19,7 +19,7 @@ func AcquireLock(dbPath string) (release func(), err error) {
 	lockPath := dbPath + ".lock"
 
 	// Attempt atomic exclusive creation.
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
 		// We own the lock — write our PID for diagnostics.
 		_, _ = fmt.Fprintf(f, "%d", os.Getpid())

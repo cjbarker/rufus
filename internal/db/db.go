@@ -61,6 +61,41 @@ CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 CREATE INDEX IF NOT EXISTS idx_tags_image ON tags(image_id);
 `
 
+// hashToInt64 converts a uint64 perceptual hash to int64 for SQLite storage
+// using two's-complement bit reinterpretation. The conversion is bijective:
+// every uint64 maps to a unique int64, so round-trips are lossless even for
+// hashes with the high bit set (which would be > math.MaxInt64 as uint64).
+func hashToInt64(h uint64) int64 { return int64(h) }
+
+// int64ToHash converts an int64 retrieved from SQLite back to the original
+// uint64 perceptual hash. This is the exact inverse of hashToInt64.
+func int64ToHash(v int64) uint64 { return uint64(v) }
+
+// migration describes a single schema change identified by a monotonically
+// increasing version number. If skipOnErr is non-empty, errors whose message
+// contains that substring are treated as a no-op (the migration is still
+// recorded as applied). This handles cases like ALTER TABLE ADD COLUMN on a
+// database that already has the column from a previous mechanism.
+type migration struct {
+	version     int
+	description string
+	sql         string
+	skipOnErr   string // optional: ignore errors containing this substring
+}
+
+// dbMigrations is the ordered list of all schema changes applied after the
+// baseline schema. Add new migrations to the end; never edit existing ones.
+var dbMigrations = []migration{
+	{
+		version:     1,
+		description: "add face_scanned_at to images",
+		sql:         "ALTER TABLE images ADD COLUMN face_scanned_at DATETIME",
+		// New databases already have this column in the base schema; ignore the
+		// "duplicate column name" error so the migration is still recorded.
+		skipOnErr: "duplicate column name",
+	},
+}
+
 // Store provides database operations for rufus.
 type Store struct {
 	db *sql.DB
@@ -91,12 +126,42 @@ func Open(dbPath string) (*Store, error) {
 	return store, nil
 }
 
-// migrate applies any schema changes needed for existing databases.
+// migrate runs any outstanding schema migrations in version order. Each
+// migration is recorded in the schema_migrations table so it runs exactly once.
 func (s *Store) migrate() error {
-	// Add face_scanned_at to images if it doesn't exist (added after initial release).
-	_, err := s.db.Exec("ALTER TABLE images ADD COLUMN face_scanned_at DATETIME")
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("adding face_scanned_at column: %w", err)
+	// Bootstrap the migrations table. This is idempotent.
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version     INTEGER PRIMARY KEY,
+		description TEXT    NOT NULL,
+		applied_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		return fmt.Errorf("creating schema_migrations table: %w", err)
+	}
+
+	for _, m := range dbMigrations {
+		var count int
+		if err := s.db.QueryRow(
+			"SELECT COUNT(*) FROM schema_migrations WHERE version = ?", m.version,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("checking migration %d: %w", m.version, err)
+		}
+		if count > 0 {
+			continue // already applied
+		}
+
+		if _, err := s.db.Exec(m.sql); err != nil {
+			if m.skipOnErr != "" && strings.Contains(err.Error(), m.skipOnErr) {
+				// Expected non-fatal error (e.g. column already exists); proceed.
+			} else {
+				return fmt.Errorf("applying migration %d (%s): %w", m.version, m.description, err)
+			}
+		}
+		if _, err := s.db.Exec(
+			"INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+			m.version, m.description,
+		); err != nil {
+			return fmt.Errorf("recording migration %d: %w", m.version, err)
+		}
 	}
 	return nil
 }
@@ -113,7 +178,12 @@ func OpenMemory() (*Store, error) {
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	store := &Store{db: db}
+	if err := store.migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+	return store, nil
 }
 
 // Close closes the database connection.
@@ -144,7 +214,7 @@ func (s *Store) InsertImage(rec *ImageRecord) (int64, error) {
 			phash=excluded.phash,
 			scanned_at=CURRENT_TIMESTAMP`,
 		rec.FilePath, rec.FileSize, rec.FileHash, rec.Width, rec.Height,
-		rec.Format, rec.ModTime, int64(rec.AHash), int64(rec.DHash), int64(rec.PHash),
+		rec.Format, rec.ModTime, hashToInt64(rec.AHash), hashToInt64(rec.DHash), hashToInt64(rec.PHash),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("inserting image: %w", err)
@@ -187,7 +257,7 @@ func (s *Store) InsertImageBatch(recs []*ImageRecord) error {
 	for _, rec := range recs {
 		if _, err := stmt.Exec(
 			rec.FilePath, rec.FileSize, rec.FileHash, rec.Width, rec.Height,
-			rec.Format, rec.ModTime, int64(rec.AHash), int64(rec.DHash), int64(rec.PHash),
+			rec.Format, rec.ModTime, hashToInt64(rec.AHash), hashToInt64(rec.DHash), hashToInt64(rec.PHash),
 		); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("inserting %s: %w", rec.FilePath, err)
@@ -232,9 +302,9 @@ func scanImage(scanner interface{ Scan(...any) error }) (ImageRecord, error) {
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.FileSize, &img.FileHash,
 		&img.Width, &img.Height, &img.Format, &img.ModTime, &img.ScannedAt,
 		&ahash, &dhash, &phash)
-	img.AHash = uint64(ahash)
-	img.DHash = uint64(dhash)
-	img.PHash = uint64(phash)
+	img.AHash = int64ToHash(ahash)
+	img.DHash = int64ToHash(dhash)
+	img.PHash = int64ToHash(phash)
 	return img, err
 }
 
