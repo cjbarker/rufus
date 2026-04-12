@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go get:*)",
+      "Bash(make build-faces:*)",
+      "Bash(brew install:*)",
+      "Bash(brew list:*)",
+      "Bash(pkg-config --libs dlib-1)",
+      "Bash(pkg-config --cflags --libs dlib-1)",
+      "Read(//opt/homebrew/Cellar/jpeg-turbo/3.1.4.1/include/**)"
+    ]
+  }
+}
