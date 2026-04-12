@@ -156,11 +156,35 @@ func distance(a, b db.ImageRecord, hashType HashType) int {
 }
 
 func mergeGroups(exact, perceptual []Group) []Group {
-	// Simple approach: combine both lists, with exact groups first.
-	// A more sophisticated approach would merge overlapping groups.
+	// Build a set of image IDs that appear in any exact-duplicate group.
+	// Perceptual groups that are fully covered by a single exact group are
+	// redundant (same images, no new information) and are dropped to avoid
+	// showing the same files twice in the output.
+	exactIDs := make(map[int64]bool)
+	for _, g := range exact {
+		for _, img := range g.Images {
+			exactIDs[img.ID] = true
+		}
+	}
+
 	all := make([]Group, 0, len(exact)+len(perceptual))
 	all = append(all, exact...)
-	all = append(all, perceptual...)
+	for _, g := range perceptual {
+		// Count how many members are not already in an exact group.
+		var novel int
+		for _, img := range g.Images {
+			if !exactIDs[img.ID] {
+				novel++
+			}
+		}
+		// Keep the perceptual group only if it adds members beyond exact groups.
+		// A group with novel == 0 is a pure subset of exact duplicates; skip it.
+		// A group with novel >= 1 contains at least one near-duplicate not caught
+		// by exact matching, so it's worth surfacing.
+		if novel >= 1 {
+			all = append(all, g)
+		}
+	}
 	return all
 }
 

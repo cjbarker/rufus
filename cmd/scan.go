@@ -68,9 +68,10 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 		// Collect all results first to know total for progress bar
 		type crawlResult struct {
-			path string
-			size int64
-			err  error
+			path    string
+			size    int64
+			modTime time.Time
+			err     error
 		}
 		var crawlResults []crawlResult
 		for result := range results {
@@ -83,7 +84,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			filesFound.Add(1)
-			crawlResults = append(crawlResults, crawlResult{path: result.Path, size: result.Size})
+			crawlResults = append(crawlResults, crawlResult{path: result.Path, size: result.Size, modTime: result.ModTime})
 			spinner.UpdateMessage(fmt.Sprintf("Discovering images... %s found", ui.Highlight.Render(fmt.Sprintf("%d", filesFound.Load()))))
 		}
 
@@ -104,8 +105,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 		// Fan out to worker pool
 		type hashJob struct {
-			path string
-			size int64
+			path    string
+			size    int64
+			modTime time.Time
 		}
 		jobs := make(chan hashJob, 256)
 		var wg sync.WaitGroup
@@ -135,7 +137,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 						Width:    hr.Width,
 						Height:   hr.Height,
 						Format:   hr.Format,
-						ModTime:  time.Now(), // Would use file mod time in production
+						ModTime:  job.modTime,
 						AHash:    hr.AHash,
 						DHash:    hr.DHash,
 						PHash:    hr.PHash,
@@ -160,7 +162,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 				}
 				if scanUpdate {
 					existing, err := store.GetImageByPath(res.rec.FilePath)
-					if err == nil && existing != nil {
+					if err == nil && existing != nil &&
+						existing.FileSize == res.rec.FileSize &&
+						existing.ModTime.Equal(res.rec.ModTime) {
 						filesSkipped.Add(1)
 						progress.Increment()
 						continue
@@ -191,7 +195,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 			if cr.err != nil {
 				continue
 			}
-			jobs <- hashJob{path: cr.path, size: cr.size}
+			jobs <- hashJob{path: cr.path, size: cr.size, modTime: cr.modTime}
 		}
 		close(jobs)
 		wg.Wait()

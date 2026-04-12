@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Supported image file extensions.
@@ -21,9 +22,10 @@ var imageExtensions = map[string]bool{
 
 // Result represents a discovered image file.
 type Result struct {
-	Path string
-	Size int64
-	Err  error
+	Path    string
+	Size    int64
+	ModTime time.Time
+	Err     error
 }
 
 // Crawl walks the directory tree rooted at root and sends discovered image
@@ -52,7 +54,7 @@ func Crawl(root string, recursive bool) <-chan Result {
 					ch <- Result{Path: path, Err: err}
 					return nil
 				}
-				ch <- Result{Path: path, Size: info.Size()}
+				ch <- Result{Path: path, Size: info.Size(), ModTime: info.ModTime()}
 				return nil
 			})
 		} else {
@@ -71,8 +73,9 @@ func Crawl(root string, recursive bool) <-chan Result {
 					continue
 				}
 				ch <- Result{
-					Path: filepath.Join(root, entry.Name()),
-					Size: info.Size(),
+					Path:    filepath.Join(root, entry.Name()),
+					Size:    info.Size(),
+					ModTime: info.ModTime(),
 				}
 			}
 		}
