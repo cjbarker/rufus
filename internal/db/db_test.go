@@ -142,8 +142,8 @@ func TestGetAllImages(t *testing.T) {
 			Format:   "jpeg",
 			ModTime:  time.Now(),
 		}
-		if _, err := store.InsertImage(rec); err != nil {
-			t.Fatal(err)
+		if _, insertErr := store.InsertImage(rec); insertErr != nil {
+			t.Fatal(insertErr)
 		}
 	}
 
@@ -212,12 +212,12 @@ func TestTagOperations(t *testing.T) {
 	}
 	imgID, _ := store.InsertImage(rec)
 
-	if err := store.InsertTag(imgID, "landscape"); err != nil {
-		t.Fatal(err)
+	if tagErr := store.InsertTag(imgID, "landscape"); tagErr != nil {
+		t.Fatal(tagErr)
 	}
 	// Duplicate tag should not error
-	if err := store.InsertTag(imgID, "landscape"); err != nil {
-		t.Fatalf("duplicate tag should be ignored: %v", err)
+	if tagErr := store.InsertTag(imgID, "landscape"); tagErr != nil {
+		t.Fatalf("duplicate tag should be ignored: %v", tagErr)
 	}
 
 	images, err := store.SearchByTag("landscape")

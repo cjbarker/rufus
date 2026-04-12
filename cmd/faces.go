@@ -355,7 +355,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 
 // matchKnownFace returns the personID and name of the closest labeled face
 // within faceMatchThreshold, or (0, "") if no match is found.
-func matchKnownFace(descriptor []float64, known []db.FaceWithPerson) (int64, string) {
+func matchKnownFace(descriptor []float64, known []db.FaceWithPerson) (personID int64, personName string) {
 	best := faceMatchThreshold
 	var bestID int64
 	var bestName string

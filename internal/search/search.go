@@ -79,7 +79,7 @@ func (e *Engine) Search(q *Query) ([]Result, error) {
 	return results, rows.Err()
 }
 
-func buildWhere(q *Query) (string, []any) {
+func buildWhere(q *Query) (sqlClause string, sqlArgs []any) {
 	var joins []string
 	var conditions []string
 	var args []any

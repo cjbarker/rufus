@@ -41,7 +41,7 @@ func Crawl(root string, recursive bool) <-chan Result {
 			_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					ch <- Result{Path: path, Err: err}
-					return nil // continue walking
+					return nil // skip entry, keep walking
 				}
 				if d.IsDir() {
 					return nil

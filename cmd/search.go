@@ -65,16 +65,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	if searchBefore != "" {
-		t, err := time.Parse("2006-01-02", searchBefore)
-		if err != nil {
-			return fmt.Errorf("invalid --before date: %w", err)
+		t, parseErr := time.Parse("2006-01-02", searchBefore)
+		if parseErr != nil {
+			return fmt.Errorf("invalid --before date: %w", parseErr)
 		}
 		q.Before = &t
 	}
 	if searchAfter != "" {
-		t, err := time.Parse("2006-01-02", searchAfter)
-		if err != nil {
-			return fmt.Errorf("invalid --after date: %w", err)
+		t, parseErr := time.Parse("2006-01-02", searchAfter)
+		if parseErr != nil {
+			return fmt.Errorf("invalid --after date: %w", parseErr)
 		}
 		q.After = &t
 	}
