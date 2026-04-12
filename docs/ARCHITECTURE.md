@@ -8,21 +8,27 @@ Technical overview of Rufus internals, data flow, and design decisions.
 rufus/
 ├── main.go                  # Entry point
 ├── cmd/                     # CLI commands (Cobra)
-│   ├── root.go              # Root command, global flags
+│   ├── root.go              # Root command, global flags, config layering
 │   ├── scan.go              # Image discovery and indexing
 │   ├── dupes.go             # Duplicate detection and reporting
 │   ├── search.go            # Query engine CLI
+│   ├── stats.go             # Library statistics
+│   ├── export.go            # Export index to JSON/CSV
+│   ├── import.go            # Import index from JSON/CSV
+│   ├── clean.go             # Remove stale database records
 │   ├── faces.go             # Face detection/labeling subcommands
-│   └── version.go           # Version info
+│   ├── version.go           # Version info
+│   └── integration_test.go  # End-to-end CLI integration tests
 ├── internal/
-│   ├── config/              # Application configuration with defaults
-│   ├── crawler/             # Async directory traversal
-│   ├── hasher/              # SHA-256 + perceptual hashing
-│   ├── db/                  # SQLite storage layer
-│   ├── duplicates/          # Duplicate grouping via Union-Find
-│   ├── faces/               # Face detection/matching interface
+│   ├── config/              # Application configuration with defaults and env-var loading
+│   ├── crawler/             # Async directory traversal with exclude support
+│   ├── hasher/              # SHA-256 + perceptual hashing (AHash, DHash, PHash)
+│   ├── db/                  # SQLite storage layer (Store pattern, migrations)
+│   ├── duplicates/          # Duplicate grouping via BK-tree + Union-Find
+│   ├── faces/               # Face detection/matching interface (dlib stub)
 │   ├── search/              # Query builder with filters
-│   └── ui/                  # Terminal UI (colors, spinners, tables)
+│   ├── ui/                  # Terminal UI (colors, spinners, tables)
+│   └── util/                # Shared helpers (FormatSize, ParseSize)
 └── testdata/                # Test fixture images
 ```
 
@@ -42,7 +48,7 @@ Directory
 └──────────┘                     └──────────────┘                         └──────────┘
 ```
 
-1. **Crawler** (`crawler.Crawl`) walks the directory tree and emits `Result` structs on a buffered channel (capacity 256). Filters by image file extension.
+1. **Crawler** (`crawler.Crawl`) walks the directory tree and emits `Result` structs on a buffered channel (capacity 256). Filters by image file extension. Directories matching the `--exclude` list (by name, absolute path, or glob) are pruned with `fs.SkipDir`.
 2. **Worker Pool** -- `N` goroutines (configurable via `--workers`) read from a jobs channel, compute SHA-256 and perceptual hashes using `hasher.HashFile`, and emit results.
 3. **DB Writer** -- A single goroutine batches results into SQLite inserts.
 4. Coordination uses `sync.WaitGroup` for workers and an `atomic.Int64` for progress counters.
@@ -60,8 +66,9 @@ All images from DB
         │
         ▼
 ┌───────────────────┐
-│ Perceptual Dupes  │  O(n²) pairwise Hamming distance
-│ (Union-Find)      │  on selected hash (aHash/dHash/pHash)
+│ Perceptual Dupes  │  O(n log n) BK-tree lookup on selected hash
+│ (BK-tree +        │  (aHash/dHash/pHash); Union-Find clusters
+│  Union-Find)      │  images within the Hamming distance threshold
 └───────┬───────────┘
         │
         ▼
@@ -74,34 +81,49 @@ All images from DB
 ```
 
 - Exact duplicates are found first via SHA-256 hash map grouping.
-- Perceptual duplicates use O(n^2) pairwise comparison with a Union-Find data structure to cluster images whose Hamming distance falls below the threshold.
+- Perceptual duplicates use a **BK-tree** for O(n log n) Hamming-distance range queries. A Union-Find data structure then clusters images whose distance falls below the threshold.
 - Groups are merged and each group is ranked to recommend which image to keep (highest resolution, then largest file size).
 
 ### Search Engine
 
 The search command builds a SQL query dynamically from filter flags:
 
-- `--tag` -- JOIN on `tags` table
+- `--tags` + `--tag-mode` -- AND mode uses a correlated subquery counting distinct matching tags; OR mode uses `EXISTS` on the tags table
 - `--face` -- JOIN on `faces` + `people` tables
+- `--has-faces` -- `EXISTS (SELECT 1 FROM faces WHERE image_id = i.id AND person_id IS NOT NULL)`
+- `--no-faces` -- `NOT EXISTS (SELECT 1 FROM faces WHERE image_id = i.id)`
 - `--min-size`, `--max-size` -- WHERE clauses on `file_size`
 - `--format` -- WHERE on `format`
 - `--before`, `--after` -- WHERE on `mod_time`
 - `--path` -- LIKE pattern on `file_path`
+- `--sort-by`, `--sort-desc` -- ORDER BY clause (path, size, date, format)
+- `--limit`, `--offset` -- LIMIT / OFFSET for pagination
 
-All filters are combinable and additive (AND logic).
+All filters are combinable and additive (AND logic between filter types).
+
+### Configuration Layering
+
+`PersistentPreRunE` in `cmd/root.go` runs before every subcommand and applies configuration in priority order:
+
+1. Load `~/.rufus/config.json` (absent file is silently ignored)
+2. Apply environment variables (`RUFUS_*`) via `config.ApplyEnv`
+3. Re-apply CLI flags that were explicitly set (checked via `pflag.Changed`)
+
+This ensures that a flag explicitly passed on the command line always wins, while still allowing the config file and env vars to set useful defaults without being overridden by Cobra's zero values.
 
 ## Database
 
-SQLite with WAL mode and foreign keys. Schema auto-initializes on `db.Open()`.
+SQLite with WAL mode and foreign keys. Schema auto-initializes on `db.Open()` via a versioned migration system.
 
 ### Tables
 
 | Table | Purpose |
 |-------|---------|
-| `images` | Core index: path, size, SHA-256 hash, dimensions, format, perceptual hashes |
+| `images` | Core index: path, size, SHA-256 hash, dimensions, format, perceptual hashes, face-scan timestamp |
 | `people` | Named persons for face recognition |
 | `faces` | Detected faces with 128-dim descriptor, bounding box, optional person link |
 | `tags` | Image tags (many-to-many via image_id) |
+| `schema_migrations` | Migration version log (version, description, applied_at) |
 
 ### Indexes
 
@@ -109,11 +131,20 @@ SQLite with WAL mode and foreign keys. Schema auto-initializes on `db.Open()`.
 - File hash index (`idx_images_file_hash`) for exact duplicate detection
 - Face and tag indexes for search query performance
 
+### Migration System
+
+`db.Open()` runs `migrate()` which applies all pending entries in the `dbMigrations` slice in version order, recording each applied migration in `schema_migrations`. Migrations are idempotent:
+
+- Already-applied versions are skipped.
+- DDL statements that are expected to fail on new databases (e.g., `ALTER TABLE ADD COLUMN` for columns already in the base schema) carry a `skipOnErr` substring; if the SQLite error message contains that substring, the error is suppressed and the migration is still recorded as applied.
+
+`OpenMemory()` also runs `migrate()`, ensuring in-memory test stores see the same schema as production.
+
 ### Design Decisions
 
 - **Pure Go SQLite** (`modernc.org/sqlite`) -- No CGO dependency, simplifying cross-compilation and builds.
 - **WAL mode** -- Enables concurrent reads during writes.
-- **Perceptual hashes stored as INT64** -- Cast from uint64, enabling direct comparison in SQL and efficient indexing.
+- **Perceptual hashes stored as INT64** -- SQLite has no UINT64 type. `hashToInt64` and `int64ToHash` helpers perform a bijective two's-complement conversion, making the fragile `int64(uint64val)` cast explicit, documented, and tested with a round-trip test covering values with the high bit set (`0x8000000000000000`, `0xFFFFFFFFFFFFFFFF`).
 
 ## Concurrency Model
 
@@ -133,6 +164,15 @@ Each image is hashed in two ways:
    - **pHash** -- Perceptual hash. Uses DCT for frequency-domain comparison.
 
 Similarity is measured by Hamming distance (number of differing bits). Lower distance = more similar.
+
+## Shared Utilities
+
+`internal/util` provides helpers used across multiple `cmd/` files:
+
+- **`FormatSize(bytes int64) string`** -- Human-readable binary size string (KB = 1024, MB = 1024², GB = 1024³).
+- **`ParseSize(s string) (int64, error)`** -- Parse size strings with decimal unit suffixes (`KB`, `MB`, `GB`, `TB`). Accepts floats (e.g., `1.5MB`).
+
+These replace earlier per-file copies in `cmd/dupes.go` and `cmd/search.go`.
 
 ## Dependencies
 
