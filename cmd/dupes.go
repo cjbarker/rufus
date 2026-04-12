@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"text/tabwriter"
 
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/duplicates"
+	"github.com/cjbarker/rufus/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -41,23 +41,36 @@ func runDupes(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
+	spinner := ui.NewSpinner("Loading indexed images...")
+	spinner.Start()
+
 	images, err := store.GetAllImages()
 	if err != nil {
+		spinner.StopWithError("Failed to load images")
 		return fmt.Errorf("loading images: %w", err)
 	}
 
 	if len(images) == 0 {
-		fmt.Println("No images indexed. Run 'rufus scan' first.")
+		spinner.StopWithMessage("")
+		ui.WarningMessage("No images indexed. Run 'rufus scan' first.")
 		return nil
 	}
+
+	spinner.UpdateMessage(fmt.Sprintf("Analyzing %s images for duplicates...",
+		ui.Highlight.Render(fmt.Sprintf("%d", len(images)))))
 
 	hashType := duplicates.HashType(dupesHash)
 	groups := duplicates.FindDuplicates(images, hashType, dupesThreshold)
 
 	if len(groups) == 0 {
-		fmt.Println("No duplicates found.")
+		spinner.StopWithSuccess("Analysis complete")
+		fmt.Println()
+		ui.SuccessMessage("No duplicates found. Your library is clean!")
 		return nil
 	}
+
+	spinner.StopWithSuccess(fmt.Sprintf("Found %s duplicate groups",
+		ui.WarningStyle.Render(fmt.Sprintf("%d", len(groups)))))
 
 	switch dupesFormat {
 	case "json":
@@ -71,25 +84,47 @@ func runDupes(cmd *cobra.Command, args []string) error {
 }
 
 func outputDupesTable(groups []duplicates.Group) {
-	fmt.Printf("Found %d duplicate groups:\n\n", len(groups))
+	totalDupes := 0
+	for _, g := range groups {
+		totalDupes += len(g.Images) - 1 // subtract 1 for the "keep" image
+	}
+
+	fmt.Println()
+	ui.SectionHeader("Duplicate Report")
+	fmt.Println()
+	ui.StatusLine("Groups", fmt.Sprintf("%d", len(groups)))
+	ui.StatusLine("Duplicates", fmt.Sprintf("%d images", totalDupes))
+	fmt.Println()
 
 	for i, group := range groups {
 		ranked := duplicates.RankForKeeping(group)
-		fmt.Printf("Group %d (%d images, max distance: %d, hash: %s)\n",
-			i+1, len(group.Images), group.MaxDistance, group.HashType)
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(w, "  KEEP\tPATH\tSIZE\tRESOLUTION\tFORMAT\n")
+		hashLabel := ui.FormatStyle.Render(string(group.HashType))
+		distLabel := ui.Dim.Render(fmt.Sprintf("max distance: %d", group.MaxDistance))
+
+		ui.GroupHeader(fmt.Sprintf(
+			"Group %s  %s images  %s  %s",
+			ui.Highlight.Render(fmt.Sprintf("%d", i+1)),
+			ui.Bold.Render(fmt.Sprintf("%d", len(group.Images))),
+			hashLabel,
+			distLabel,
+		))
+
+		tbl := ui.NewTable("", "PATH", "SIZE", "RESOLUTION", "FORMAT")
 		for j, img := range ranked {
-			keep := " "
+			badge := ui.RemoveBadge
 			if j == 0 {
-				keep = "*"
+				badge = ui.KeepBadge
 			}
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%dx%d\t%s\n",
-				keep, img.FilePath, formatSize(img.FileSize),
-				img.Width, img.Height, img.Format)
+			tbl.AddRow(
+				badge,
+				ui.PathStyle.Render(img.FilePath),
+				ui.SizeStyle.Render(formatSize(img.FileSize)),
+				fmt.Sprintf("%dx%d", img.Width, img.Height),
+				ui.FormatStyle.Render(img.Format),
+			)
 		}
-		w.Flush()
+		tbl.Render()
 		fmt.Println()
 	}
 }
@@ -106,12 +141,12 @@ type dupesJSONGroup struct {
 }
 
 type dupesJSONImage struct {
-	Path       string `json:"path"`
-	Size       int64  `json:"size"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	Format     string `json:"format"`
-	Recommended bool  `json:"recommended_keep"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	Format      string `json:"format"`
+	Recommended bool   `json:"recommended_keep"`
 }
 
 func outputDupesJSON(groups []duplicates.Group) error {

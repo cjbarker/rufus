@@ -2,11 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"text/tabwriter"
 
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/faces"
+	"github.com/cjbarker/rufus/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -57,9 +56,9 @@ func init() {
 }
 
 func runFacesDetect(cmd *cobra.Command, args []string) error {
-	fmt.Println("Face detection requires dlib models.")
-	fmt.Println("This feature will be fully functional when dlib is installed.")
-	fmt.Println("See: https://github.com/Kagami/go-face for setup instructions.")
+	ui.WarningMessage("Face detection requires dlib models.")
+	ui.InfoMessage("This feature will be fully functional when dlib is installed.")
+	ui.InfoMessage("See: https://github.com/Kagami/go-face for setup instructions.")
 	return nil
 }
 
@@ -81,7 +80,9 @@ func runFacesLabel(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("labeling face: %w", err)
 	}
 
-	fmt.Printf("Labeled face %d as %q\n", faceID, name)
+	ui.SuccessMessage(fmt.Sprintf("Labeled face %s as %s",
+		ui.Highlight.Render(fmt.Sprintf("%d", faceID)),
+		ui.Bold.Render(fmt.Sprintf("%q", name))))
 	return nil
 }
 
@@ -99,16 +100,25 @@ func runFacesFind(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(images) == 0 {
-		fmt.Printf("No images found for %q\n", args[0])
+		ui.WarningMessage(fmt.Sprintf("No images found for %q", args[0]))
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "PATH\tSIZE\tRESOLUTION\n")
+	fmt.Println()
+	ui.SectionHeader(fmt.Sprintf("Images of %s", args[0]))
+	fmt.Println()
+
+	tbl := ui.NewTable("PATH", "SIZE", "RESOLUTION")
 	for _, img := range images {
-		fmt.Fprintf(w, "%s\t%s\t%dx%d\n", img.FilePath, formatSize(img.FileSize), img.Width, img.Height)
+		tbl.AddRow(
+			ui.PathStyle.Render(img.FilePath),
+			ui.SizeStyle.Render(formatSize(img.FileSize)),
+			fmt.Sprintf("%dx%d", img.Width, img.Height),
+		)
 	}
-	return w.Flush()
+	tbl.Render()
+	fmt.Println()
+	return nil
 }
 
 func runFacesList(cmd *cobra.Command, args []string) error {
@@ -124,14 +134,23 @@ func runFacesList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(people) == 0 {
-		fmt.Println("No people labeled yet. Use 'rufus faces label' to label faces.")
+		ui.InfoMessage("No people labeled yet. Use 'rufus faces label' to label faces.")
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "ID\tNAME\tCREATED\n")
+	fmt.Println()
+	ui.SectionHeader("Known People")
+	fmt.Println()
+
+	tbl := ui.NewTable("ID", "NAME", "CREATED")
 	for _, p := range people {
-		fmt.Fprintf(w, "%d\t%s\t%s\n", p.ID, p.Name, p.CreatedAt.Format("2006-01-02"))
+		tbl.AddRow(
+			ui.Dim.Render(fmt.Sprintf("%d", p.ID)),
+			ui.Bold.Render(p.Name),
+			ui.Dim.Render(p.CreatedAt.Format("2006-01-02")),
+		)
 	}
-	return w.Flush()
+	tbl.Render()
+	fmt.Println()
+	return nil
 }
