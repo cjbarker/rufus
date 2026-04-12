@@ -11,6 +11,7 @@ import (
 	"github.com/cjbarker/rufus/internal/crawler"
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/hasher"
+	"github.com/cjbarker/rufus/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -51,11 +52,55 @@ func runScan(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("resolving path %q: %w", root, err)
 		}
 
-		if cfg.Verbose {
-			fmt.Printf("Scanning %s...\n", absRoot)
+		ui.SectionHeader("Scanning")
+		ui.StatusLine("Path", absRoot)
+		ui.StatusLine("Workers", fmt.Sprintf("%d", cfg.Workers))
+		if scanUpdate {
+			ui.StatusLine("Mode", "incremental (update only)")
 		}
+		fmt.Println()
+
+		// Phase 1: Discover images with spinner
+		spinner := ui.NewSpinner(fmt.Sprintf("Discovering images in %s...", ui.PathStyle.Render(absRoot)))
+		spinner.Start()
 
 		results := crawler.Crawl(absRoot, scanRecursive)
+
+		// Collect all results first to know total for progress bar
+		type crawlResult struct {
+			path string
+			size int64
+			err  error
+		}
+		var crawlResults []crawlResult
+		for result := range results {
+			if result.Err != nil {
+				errors.Add(1)
+				if cfg.Verbose {
+					log.Printf("crawl error: %v", result.Err)
+				}
+				crawlResults = append(crawlResults, crawlResult{err: result.Err})
+				continue
+			}
+			filesFound.Add(1)
+			crawlResults = append(crawlResults, crawlResult{path: result.Path, size: result.Size})
+			spinner.UpdateMessage(fmt.Sprintf("Discovering images... %s found", ui.Highlight.Render(fmt.Sprintf("%d", filesFound.Load()))))
+		}
+
+		found := filesFound.Load()
+		spinner.StopWithSuccess(fmt.Sprintf("Discovered %s images", ui.Highlight.Render(fmt.Sprintf("%d", found))))
+
+		if found == 0 {
+			ui.WarningMessage("No images found in the specified path.")
+			continue
+		}
+
+		// Phase 2: Hash and index with progress bar
+		progress := ui.NewProgress(
+			ui.InfoStyle.Render("Indexing"),
+			found,
+		)
+		progress.Start()
 
 		// Fan out to worker pool
 		type hashJob struct {
@@ -110,12 +155,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 					if cfg.Verbose {
 						log.Printf("error: %v", res.err)
 					}
+					progress.Increment()
 					continue
 				}
 				if scanUpdate {
 					existing, err := store.GetImageByPath(res.rec.FilePath)
 					if err == nil && existing != nil {
 						filesSkipped.Add(1)
+						progress.Increment()
 						continue
 					}
 				}
@@ -124,39 +171,63 @@ func runScan(cmd *cobra.Command, args []string) error {
 					if cfg.Verbose {
 						log.Printf("db error: %v", err)
 					}
+					progress.Increment()
 					continue
 				}
 				filesIndexed.Add(1)
+				progress.Increment()
 				if cfg.Verbose {
-					fmt.Printf("  indexed: %s (%dx%d %s)\n", res.rec.FilePath, res.rec.Width, res.rec.Height, res.rec.Format)
+					fmt.Printf("\r\033[K  %s %s (%dx%d %s)\n",
+						ui.SuccessStyle.Render("✔"),
+						ui.PathStyle.Render(res.rec.FilePath),
+						res.rec.Width, res.rec.Height,
+						ui.FormatStyle.Render(res.rec.Format))
 				}
 			}
 		}()
 
-		// Feed crawler results to workers
-		for result := range results {
-			if result.Err != nil {
-				errors.Add(1)
-				if cfg.Verbose {
-					log.Printf("crawl error: %v", result.Err)
-				}
+		// Feed collected results to workers
+		for _, cr := range crawlResults {
+			if cr.err != nil {
 				continue
 			}
-			filesFound.Add(1)
-			jobs <- hashJob{path: result.Path, size: result.Size}
+			jobs <- hashJob{path: cr.path, size: cr.size}
 		}
 		close(jobs)
 		wg.Wait()
 		close(indexed)
 		dbWg.Wait()
+		progress.Stop()
 	}
 
 	elapsed := time.Since(start)
-	fmt.Printf("\nScan complete in %s\n", elapsed.Round(time.Millisecond))
-	fmt.Printf("  Found:   %d images\n", filesFound.Load())
-	fmt.Printf("  Indexed: %d images\n", filesIndexed.Load())
-	fmt.Printf("  Skipped: %d images\n", filesSkipped.Load())
-	fmt.Printf("  Errors:  %d\n", errors.Load())
+	fmt.Println()
+	ui.SectionHeader("Scan Complete")
+	fmt.Println()
+	ui.StatusLine("Duration", elapsed.Round(time.Millisecond).String())
+	ui.StatusLine("Found", fmt.Sprintf("%d images", filesFound.Load()))
+
+	indexedCount := filesIndexed.Load()
+	if indexedCount > 0 {
+		fmt.Printf("  %s %s\n",
+			ui.Dim.Render("Indexed:"),
+			ui.SuccessStyle.Render(fmt.Sprintf("%d images", indexedCount)))
+	}
+
+	skippedCount := filesSkipped.Load()
+	if skippedCount > 0 {
+		fmt.Printf("  %s %s\n",
+			ui.Dim.Render("Skipped:"),
+			ui.WarningStyle.Render(fmt.Sprintf("%d images", skippedCount)))
+	}
+
+	errCount := errors.Load()
+	if errCount > 0 {
+		fmt.Printf("  %s %s\n",
+			ui.Dim.Render("Errors:"),
+			ui.ErrorStyle.Render(fmt.Sprintf("%d", errCount)))
+	}
+	fmt.Println()
 
 	return nil
 }

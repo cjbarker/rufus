@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/cjbarker/rufus/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +15,10 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("rufus %s\n", Version)
-		fmt.Printf("  go:   %s\n", runtime.Version())
-		fmt.Printf("  os:   %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		ui.Banner(Version)
+		ui.StatusLine("Go", runtime.Version())
+		ui.StatusLine("Platform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+		fmt.Println()
 	},
 }
 

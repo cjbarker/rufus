@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"text/tabwriter"
 	"time"
 
 	"github.com/cjbarker/rufus/internal/db"
 	"github.com/cjbarker/rufus/internal/search"
+	"github.com/cjbarker/rufus/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -79,16 +79,25 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		q.After = &t
 	}
 
+	spinner := ui.NewSpinner("Searching...")
+	spinner.Start()
+
 	engine := search.NewEngine(store)
 	results, err := engine.Search(q)
 	if err != nil {
+		spinner.StopWithError("Search failed")
 		return fmt.Errorf("search failed: %w", err)
 	}
 
 	if len(results) == 0 {
-		fmt.Println("No results found.")
+		spinner.StopWithSuccess("Search complete")
+		fmt.Println()
+		ui.InfoMessage("No results found.")
 		return nil
 	}
+
+	spinner.StopWithSuccess(fmt.Sprintf("Found %s results",
+		ui.Highlight.Render(fmt.Sprintf("%d", len(results)))))
 
 	switch searchOutput {
 	case "json":
@@ -99,15 +108,23 @@ func runSearch(cmd *cobra.Command, args []string) error {
 }
 
 func outputSearchTable(results []search.Result) error {
-	fmt.Printf("Found %d results:\n\n", len(results))
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "PATH\tSIZE\tRESOLUTION\tFORMAT\n")
+	fmt.Println()
+	ui.SectionHeader("Search Results")
+	fmt.Println()
+
+	tbl := ui.NewTable("PATH", "SIZE", "RESOLUTION", "FORMAT")
 	for _, r := range results {
 		img := r.Image
-		fmt.Fprintf(w, "%s\t%s\t%dx%d\t%s\n",
-			img.FilePath, formatSize(img.FileSize), img.Width, img.Height, img.Format)
+		tbl.AddRow(
+			ui.PathStyle.Render(img.FilePath),
+			ui.SizeStyle.Render(formatSize(img.FileSize)),
+			fmt.Sprintf("%dx%d", img.Width, img.Height),
+			ui.FormatStyle.Render(img.Format),
+		)
 	}
-	return w.Flush()
+	tbl.Render()
+	fmt.Println()
+	return nil
 }
 
 type searchJSONResult struct {
