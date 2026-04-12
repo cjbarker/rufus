@@ -75,7 +75,7 @@ func TestCrawlRecursive(t *testing.T) {
 	}
 	createTestFile(t, filepath.Join(subdir, "d.jpeg"))
 
-	results := Crawl(dir, true)
+	results := Crawl(dir, true, nil)
 	var paths []string
 	for r := range results {
 		if r.Err != nil {
@@ -107,7 +107,7 @@ func TestCrawlNonRecursive(t *testing.T) {
 	}
 	createTestFile(t, filepath.Join(subdir, "b.jpg"))
 
-	results := Crawl(dir, false)
+	results := Crawl(dir, false, nil)
 	var paths []string
 	for r := range results {
 		if r.Err != nil {

@@ -67,6 +67,18 @@ func findExactDuplicates(images []db.ImageRecord) []Group {
 	return groups
 }
 
+// hashOf extracts the appropriate perceptual hash value from an image record.
+func hashOf(img db.ImageRecord, hashType HashType) uint64 {
+	switch hashType {
+	case AHash:
+		return img.AHash
+	case PHash:
+		return img.PHash
+	default:
+		return img.DHash
+	}
+}
+
 func findPerceptualDuplicates(images []db.ImageRecord, hashType HashType, threshold int) []Group {
 	n := len(images)
 
@@ -91,12 +103,19 @@ func findPerceptualDuplicates(images []db.ImageRecord, hashType HashType, thresh
 		}
 	}
 
-	// Compare all pairs — for large datasets a BK-tree would be better,
-	// but this O(n^2) approach works well for typical photo libraries (< 100K images).
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			dist := distance(images[i], images[j], hashType)
-			if dist <= threshold {
+	// Build a BK-tree over all image hashes for O(n log n) neighbor queries
+	// instead of the O(n²) pairwise scan.
+	tree := &bkTree{}
+	for i, img := range images {
+		tree.insert(i, hashOf(img, hashType))
+	}
+
+	// For each image, query the BK-tree for all neighbors within threshold.
+	// Union-Find handles transitivity; duplicate union calls are no-ops.
+	for i, img := range images {
+		neighbors := tree.search(hashOf(img, hashType), threshold)
+		for _, j := range neighbors {
+			if j != i {
 				union(i, j)
 			}
 		}

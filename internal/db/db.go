@@ -152,6 +152,79 @@ func (s *Store) InsertImage(rec *ImageRecord) (int64, error) {
 	return result.LastInsertId()
 }
 
+// InsertImageBatch inserts or upserts multiple image records in a single
+// transaction using a shared prepared statement. This is significantly faster
+// than calling InsertImage in a loop because it amortises the per-transaction
+// overhead across the whole batch.
+func (s *Store) InsertImageBatch(recs []*ImageRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("starting batch transaction: %w", err)
+	}
+	stmt, err := tx.Prepare(`
+		INSERT INTO images (file_path, file_size, file_hash, width, height, format, mod_time, ahash, dhash, phash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET
+			file_size=excluded.file_size,
+			file_hash=excluded.file_hash,
+			width=excluded.width,
+			height=excluded.height,
+			format=excluded.format,
+			mod_time=excluded.mod_time,
+			ahash=excluded.ahash,
+			dhash=excluded.dhash,
+			phash=excluded.phash,
+			scanned_at=CURRENT_TIMESTAMP`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("preparing batch statement: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, rec := range recs {
+		if _, err := stmt.Exec(
+			rec.FilePath, rec.FileSize, rec.FileHash, rec.Width, rec.Height,
+			rec.Format, rec.ModTime, int64(rec.AHash), int64(rec.DHash), int64(rec.PHash),
+		); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("inserting %s: %w", rec.FilePath, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing batch: %w", err)
+	}
+	return nil
+}
+
+// WalkUnlabeledFacesWithDescriptors streams face records that have no assigned
+// person, invoking fn for each one without loading the full result set into
+// memory. fn may call other Store methods safely (WAL mode allows concurrent
+// reads and writes). Return a non-nil error from fn to abort the walk.
+func (s *Store) WalkUnlabeledFacesWithDescriptors(fn func(FaceRecord) error) error {
+	rows, err := s.db.Query(`
+		SELECT id, image_id, descriptor, bounds_x, bounds_y, bounds_w, bounds_h, person_id
+		FROM faces WHERE person_id IS NULL ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("querying unlabeled faces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var f FaceRecord
+		if err := rows.Scan(&f.ID, &f.ImageID, &f.Descriptor,
+			&f.BoundsX, &f.BoundsY, &f.BoundsW, &f.BoundsH, &f.PersonID); err != nil {
+			return fmt.Errorf("scanning face row: %w", err)
+		}
+		if err := fn(f); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 // scanImage scans an image row into an ImageRecord, handling int64-to-uint64 hash conversion.
 func scanImage(scanner interface{ Scan(...any) error }) (ImageRecord, error) {
 	var img ImageRecord
@@ -451,6 +524,167 @@ func (s *Store) GetFacesByImage(imageID int64) ([]FaceRecord, error) {
 func (s *Store) UpdateFacePerson(faceID, personID int64) error {
 	_, err := s.db.Exec("UPDATE faces SET person_id = ? WHERE id = ?", personID, faceID)
 	return err
+}
+
+// UnlabelFace removes the person assignment from a face (sets person_id = NULL).
+func (s *Store) UnlabelFace(faceID int64) error {
+	_, err := s.db.Exec("UPDATE faces SET person_id = NULL WHERE id = ?", faceID)
+	if err != nil {
+		return fmt.Errorf("unlabeling face %d: %w", faceID, err)
+	}
+	return nil
+}
+
+// MergePeople reassigns all faces from mergeID to keepID, then deletes mergeID.
+// Both operations run inside a single transaction.
+func (s *Store) MergePeople(keepID, mergeID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning merge transaction: %w", err)
+	}
+	if _, err := tx.Exec("UPDATE faces SET person_id = ? WHERE person_id = ?", keepID, mergeID); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("reassigning faces: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM people WHERE id = ?", mergeID); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("deleting merged person: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing merge: %w", err)
+	}
+	return nil
+}
+
+// GetStats returns aggregate counts for images, faces, people, and tags,
+// plus the on-disk size of the database file.
+func (s *Store) GetStats(dbPath string) (Stats, error) {
+	var st Stats
+	row := s.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM images),
+			(SELECT COUNT(*) FROM faces),
+			(SELECT COUNT(*) FROM people),
+			(SELECT COUNT(*) FROM tags)`)
+	if err := row.Scan(&st.Images, &st.Faces, &st.People, &st.Tags); err != nil {
+		return st, fmt.Errorf("querying stats: %w", err)
+	}
+	if dbPath != "" && dbPath != ":memory:" {
+		info, err := os.Stat(dbPath)
+		if err == nil {
+			st.DBSizeBytes = info.Size()
+		}
+	}
+	return st, nil
+}
+
+// Vacuum runs SQLite's VACUUM command to reclaim unused space after deletions.
+func (s *Store) Vacuum() error {
+	_, err := s.db.Exec("VACUUM")
+	if err != nil {
+		return fmt.Errorf("vacuuming database: %w", err)
+	}
+	return nil
+}
+
+// ExportAll returns all images with their tags as ExportRecords, suitable for
+// JSON or CSV serialization.
+func (s *Store) ExportAll() ([]ExportRecord, error) {
+	images, err := s.GetAllImages()
+	if err != nil {
+		return nil, err
+	}
+	records := make([]ExportRecord, 0, len(images))
+	for _, img := range images {
+		tags, err := s.getTagsForImage(img.ID)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, ExportRecord{
+			FilePath: img.FilePath,
+			FileSize: img.FileSize,
+			FileHash: img.FileHash,
+			Width:    img.Width,
+			Height:   img.Height,
+			Format:   img.Format,
+			ModTime:  img.ModTime.Format("2006-01-02T15:04:05Z07:00"),
+			Tags:     tags,
+		})
+	}
+	return records, nil
+}
+
+// getTagsForImage returns all tag strings for a given image ID.
+func (s *Store) getTagsForImage(imageID int64) ([]string, error) {
+	rows, err := s.db.Query("SELECT tag FROM tags WHERE image_id = ? ORDER BY tag", imageID)
+	if err != nil {
+		return nil, fmt.Errorf("querying tags for image %d: %w", imageID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scanning tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// ImportRecords bulk-inserts ExportRecords (image metadata + tags) in a single
+// transaction. Existing images are updated; tags are inserted with OR IGNORE.
+func (s *Store) ImportRecords(recs []ExportRecord) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning import transaction: %w", err)
+	}
+	imgStmt, err := tx.Prepare(`
+		INSERT INTO images (file_path, file_size, file_hash, width, height, format, mod_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET
+			file_size=excluded.file_size,
+			file_hash=excluded.file_hash,
+			width=excluded.width,
+			height=excluded.height,
+			format=excluded.format,
+			mod_time=excluded.mod_time,
+			scanned_at=CURRENT_TIMESTAMP`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("preparing import statement: %w", err)
+	}
+	defer func() { _ = imgStmt.Close() }()
+
+	tagStmt, err := tx.Prepare("INSERT OR IGNORE INTO tags (image_id, tag) VALUES (?, ?)")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("preparing tag insert statement: %w", err)
+	}
+	defer func() { _ = tagStmt.Close() }()
+
+	for _, rec := range recs {
+		res, err := imgStmt.Exec(rec.FilePath, rec.FileSize, rec.FileHash, rec.Width, rec.Height, rec.Format, rec.ModTime)
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("importing %s: %w", rec.FilePath, err)
+		}
+		imgID, err := res.LastInsertId()
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("getting insert id for %s: %w", rec.FilePath, err)
+		}
+		for _, tag := range rec.Tags {
+			if _, err := tagStmt.Exec(imgID, tag); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("importing tag %q for %s: %w", tag, rec.FilePath, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing import: %w", err)
+	}
+	return nil
 }
 
 // GetImagesByPerson returns all images containing a named person's face.

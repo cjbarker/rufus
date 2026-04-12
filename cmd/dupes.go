@@ -147,12 +147,17 @@ func outputDupesTable(groups []duplicates.Group, store *db.Store, autoYes bool) 
 			}
 			if autoYes || ui.Confirm(fmt.Sprintf("Delete %d exact %s?", len(toDelete), noun), false) {
 				for _, img := range toDelete {
-					if err := os.Remove(img.FilePath); err != nil {
-						ui.ErrorMessage(fmt.Sprintf("Could not delete file: %v", err))
+					// Remove from the index first. If this fails the file is
+					// untouched and the state remains consistent.
+					if err := store.DeleteImage(img.ID); err != nil {
+						ui.ErrorMessage(fmt.Sprintf("Failed to update index, skipping deletion: %v", err))
 						continue
 					}
-					if err := store.DeleteImage(img.ID); err != nil {
-						ui.ErrorMessage(fmt.Sprintf("Removed file but failed to update index: %v", err))
+					// Index entry is gone; now remove the file. If this fails
+					// the file survives on disk and will be re-indexed on the
+					// next scan, which is safe.
+					if err := os.Remove(img.FilePath); err != nil {
+						ui.ErrorMessage(fmt.Sprintf("Removed from index but could not delete file: %v", err))
 						continue
 					}
 					ui.SuccessMessage(fmt.Sprintf("Deleted %s", img.FilePath))

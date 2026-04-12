@@ -18,6 +18,7 @@ import (
 var (
 	scanRecursive bool
 	scanUpdate    bool
+	scanExcludes  []string
 )
 
 var scanCmd = &cobra.Command{
@@ -33,10 +34,17 @@ and stores the results in the index database.`,
 func init() {
 	scanCmd.Flags().BoolVarP(&scanRecursive, "recursive", "r", true, "recurse into subdirectories")
 	scanCmd.Flags().BoolVar(&scanUpdate, "update", false, "only process new/modified files")
+	scanCmd.Flags().StringArrayVar(&scanExcludes, "exclude", nil, "directory names or paths to exclude (repeatable)")
 	rootCmd.AddCommand(scanCmd)
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
+	release, err := db.AcquireLock(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	store, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
@@ -45,6 +53,25 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	start := time.Now()
 	var filesFound, filesIndexed, filesSkipped, errors atomic.Int64
+
+	// For --update mode, preload all existing image metadata once so workers
+	// can skip unchanged files before performing any hashing (O(1) map lookup
+	// instead of one DB query per file).
+	var existingByPath map[string]db.ImageRecord
+	if scanUpdate {
+		spinner := ui.NewSpinner("Loading existing index...")
+		spinner.Start()
+		existing, loadErr := store.GetAllImages()
+		if loadErr != nil {
+			spinner.StopWithError("Failed to load index")
+			return fmt.Errorf("loading existing images: %w", loadErr)
+		}
+		existingByPath = make(map[string]db.ImageRecord, len(existing))
+		for _, img := range existing {
+			existingByPath[img.FilePath] = img
+		}
+		spinner.StopWithSuccess(fmt.Sprintf("Loaded %d existing records", len(existing)))
+	}
 
 	for _, root := range args {
 		absRoot, err := filepath.Abs(root)
@@ -64,7 +91,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		spinner := ui.NewSpinner(fmt.Sprintf("Discovering images in %s...", ui.PathStyle.Render(absRoot)))
 		spinner.Start()
 
-		results := crawler.Crawl(absRoot, scanRecursive)
+		results := crawler.Crawl(absRoot, scanRecursive, scanExcludes)
 
 		// Collect all results first to know total for progress bar
 		type crawlResult struct {
@@ -112,19 +139,28 @@ func runScan(cmd *cobra.Command, args []string) error {
 		jobs := make(chan hashJob, 256)
 		var wg sync.WaitGroup
 
-		// Collect results for batched DB writes
 		type indexResult struct {
-			rec *db.ImageRecord
-			err error
+			rec  *db.ImageRecord
+			err  error
+			skip bool // true when --update determines file is unchanged
 		}
 		indexed := make(chan indexResult, 256)
 
-		// Worker pool: hash images
+		// Worker pool: check skip, then hash images.
 		for i := 0; i < cfg.Workers; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				for job := range jobs {
+					// Skip unchanged files before the expensive hash operation.
+					if scanUpdate {
+						if ex, ok := existingByPath[job.path]; ok &&
+							ex.FileSize == job.size &&
+							ex.ModTime.Equal(job.modTime) {
+							indexed <- indexResult{skip: true}
+							continue
+						}
+					}
 					hr, err := hasher.HashFile(job.path)
 					if err != nil {
 						indexed <- indexResult{err: fmt.Errorf("%s: %w", job.path, err)}
@@ -146,48 +182,55 @@ func runScan(cmd *cobra.Command, args []string) error {
 			}()
 		}
 
-		// DB writer goroutine
+		// DB writer goroutine — collects records into batches of scanBatchSize
+		// and flushes them in a single transaction for significantly lower I/O.
+		const scanBatchSize = 100
 		var dbWg sync.WaitGroup
 		dbWg.Add(1)
 		go func() {
 			defer dbWg.Done()
+			var batch []*db.ImageRecord
+
+			flush := func() {
+				if len(batch) == 0 {
+					return
+				}
+				if err := store.InsertImageBatch(batch); err != nil {
+					errors.Add(int64(len(batch)))
+					if cfg.Verbose {
+						log.Printf("batch db error: %v", err)
+					}
+				} else {
+					filesIndexed.Add(int64(len(batch)))
+				}
+				batch = batch[:0]
+			}
+
 			for res := range indexed {
-				if res.err != nil {
+				progress.Increment()
+				switch {
+				case res.skip:
+					filesSkipped.Add(1)
+				case res.err != nil:
 					errors.Add(1)
 					if cfg.Verbose {
 						log.Printf("error: %v", res.err)
 					}
-					progress.Increment()
-					continue
-				}
-				if scanUpdate {
-					existing, err := store.GetImageByPath(res.rec.FilePath)
-					if err == nil && existing != nil &&
-						existing.FileSize == res.rec.FileSize &&
-						existing.ModTime.Equal(res.rec.ModTime) {
-						filesSkipped.Add(1)
-						progress.Increment()
-						continue
-					}
-				}
-				if _, err := store.InsertImage(res.rec); err != nil {
-					errors.Add(1)
+				default:
 					if cfg.Verbose {
-						log.Printf("db error: %v", err)
+						fmt.Printf("\r\033[K  %s %s (%dx%d %s)\n",
+							ui.SuccessStyle.Render("✔"),
+							ui.FileLink(res.rec.FilePath),
+							res.rec.Width, res.rec.Height,
+							ui.FormatStyle.Render(res.rec.Format))
 					}
-					progress.Increment()
-					continue
-				}
-				filesIndexed.Add(1)
-				progress.Increment()
-				if cfg.Verbose {
-					fmt.Printf("\r\033[K  %s %s (%dx%d %s)\n",
-						ui.SuccessStyle.Render("✔"),
-						ui.FileLink(res.rec.FilePath),
-						res.rec.Width, res.rec.Height,
-						ui.FormatStyle.Render(res.rec.Format))
+					batch = append(batch, res.rec)
+					if len(batch) >= scanBatchSize {
+						flush()
+					}
 				}
 			}
+			flush() // commit any remaining records
 		}()
 
 		// Feed collected results to workers

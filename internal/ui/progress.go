@@ -33,6 +33,9 @@ func NewProgress(label string, total int64) *Progress {
 
 // Start begins the progress bar animation.
 func (p *Progress) Start() {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("%s (0/%d)\n", p.label, p.total)
 		return

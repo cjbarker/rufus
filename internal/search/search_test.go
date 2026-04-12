@@ -66,7 +66,7 @@ func TestSearchByTag(t *testing.T) {
 	store := setupTestStore(t)
 
 	engine := NewEngine(store)
-	results, err := engine.Search(&Query{Tag: "nature"})
+	results, err := engine.Search(&Query{Tags: []string{"nature"}})
 	if err != nil {
 		t.Fatal(err)
 	}

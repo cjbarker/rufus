@@ -20,10 +20,6 @@ type detectResult struct {
 	err        error
 }
 
-// faceMatchThreshold is the maximum Euclidean descriptor distance used to
-// auto-assign a detected face to an already-labeled person.
-const faceMatchThreshold = 0.6
-
 var facesTolerance float64
 
 var facesCmd = &cobra.Command{
@@ -69,6 +65,22 @@ var facesUnlabeledCmd = &cobra.Command{
 	RunE:  runFacesUnlabeled,
 }
 
+var facesMergeCmd = &cobra.Command{
+	Use:   "merge <keep-id> <merge-id>",
+	Short: "Merge two people records into one",
+	Long: `Reassign all faces from merge-id to keep-id, then delete merge-id.
+Both IDs can be found with "rufus faces list".`,
+	Args: cobra.ExactArgs(2),
+	RunE: runFacesMerge,
+}
+
+var facesUnlabelCmd = &cobra.Command{
+	Use:   "unlabel <face-id>",
+	Short: "Remove the name assignment from a detected face",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runFacesUnlabel,
+}
+
 func init() {
 	facesCmd.PersistentFlags().Float64Var(&facesTolerance, "tolerance", 0.6, "face match tolerance")
 	facesDetectCmd.Flags().BoolVarP(&facesForce, "force", "f", false, "re-scan all images, ignoring the face-scan cache")
@@ -77,6 +89,8 @@ func init() {
 	facesCmd.AddCommand(facesFindCmd)
 	facesCmd.AddCommand(facesListCmd)
 	facesCmd.AddCommand(facesUnlabeledCmd)
+	facesCmd.AddCommand(facesMergeCmd)
+	facesCmd.AddCommand(facesUnlabelCmd)
 	rootCmd.AddCommand(facesCmd)
 }
 
@@ -264,7 +278,7 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 					Descriptor: faces.EncodeDescriptor(d.Descriptor),
 				}
 
-				if personID, name := matchKnownFace(d.Descriptor, knownFaces); personID > 0 {
+				if personID, name := matchKnownFace(d.Descriptor, knownFaces, facesTolerance); personID > 0 {
 					faceRec.PersonID = &personID
 					if cfg.Verbose {
 						fmt.Printf("    %s\n", ui.InfoStyle.Render(fmt.Sprintf("→ matched %q", name)))
@@ -293,39 +307,54 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 	// Rematch pass: apply known labels to any unlabeled faces already in the DB.
 	// This runs regardless of whether new images were scanned, so newly added labels
 	// are propagated to faces detected in previous runs.
+	//
+	// Descriptors are streamed one row at a time via WalkUnlabeledFacesWithDescriptors
+	// rather than loaded all at once, keeping memory usage O(1) regardless of how
+	// many unlabeled faces exist.
 	if knownLabeledCount > 0 {
-		unlabeled, err := store.GetUnlabeledFacesWithDescriptors()
-		if err != nil {
-			return fmt.Errorf("loading unlabeled faces for rematch: %w", err)
+		// Count unlabeled faces first so we can detect the "nothing to do" case
+		// without loading descriptors. We use a simple walk that counts rows.
+		var unlabeledCount int
+		walkErr := store.WalkUnlabeledFacesWithDescriptors(func(_ db.FaceRecord) error {
+			unlabeledCount++
+			return nil
+		})
+		if walkErr != nil {
+			return fmt.Errorf("counting unlabeled faces: %w", walkErr)
 		}
-		if len(images) == 0 && len(unlabeled) == 0 {
+
+		if len(images) == 0 && unlabeledCount == 0 {
 			ui.SuccessMessage("No unlabeled faces to re-match. Use --force to re-scan all images.")
 			return nil
 		}
-		if len(unlabeled) > 0 {
+		if unlabeledCount > 0 {
 			fmt.Println()
-			ui.SectionHeader(fmt.Sprintf("Re-matching %d unlabeled face(s) against %d known label(s)", len(unlabeled), knownLabeledCount))
+			ui.SectionHeader(fmt.Sprintf("Re-matching %d unlabeled face(s) against %d known label(s)", unlabeledCount, knownLabeledCount))
 			fmt.Println()
-			for _, f := range unlabeled {
+			walkErr = store.WalkUnlabeledFacesWithDescriptors(func(f db.FaceRecord) error {
 				desc, err := faces.DecodeDescriptor(f.Descriptor)
 				if err != nil {
-					continue
+					return nil // skip corrupted descriptor, continue walk
 				}
-				personID, name := matchKnownFace(desc, knownFaces)
+				personID, name := matchKnownFace(desc, knownFaces, facesTolerance)
 				if personID == 0 {
-					continue
+					return nil
 				}
 				if err := store.UpdateFacePerson(f.ID, personID); err != nil {
 					ui.ErrorMessage(fmt.Sprintf("updating face %d: %v", f.ID, err))
-					continue
+					return nil
 				}
 				if cfg.Verbose {
 					fmt.Printf("  face %d → %q\n", f.ID, name)
 				}
 				rematched++
+				return nil
+			})
+			if walkErr != nil {
+				return fmt.Errorf("rematch walk failed: %w", walkErr)
 			}
 		}
-		remainingUnlabeled = len(unlabeled) - rematched
+		remainingUnlabeled = unlabeledCount - rematched
 	} else {
 		remainingUnlabeled = detected - labeled
 	}
@@ -354,9 +383,9 @@ func runFacesDetect(cmd *cobra.Command, args []string) error {
 }
 
 // matchKnownFace returns the personID and name of the closest labeled face
-// within faceMatchThreshold, or (0, "") if no match is found.
-func matchKnownFace(descriptor []float64, known []db.FaceWithPerson) (personID int64, personName string) {
-	best := faceMatchThreshold
+// within the given tolerance, or (0, "") if no match is found.
+func matchKnownFace(descriptor []float64, known []db.FaceWithPerson, tolerance float64) (personID int64, personName string) {
+	best := tolerance
 	var bestID int64
 	var bestName string
 
@@ -471,6 +500,72 @@ func runFacesList(cmd *cobra.Command, args []string) error {
 	}
 	tbl.Render()
 	fmt.Println()
+	return nil
+}
+
+func runFacesMerge(cmd *cobra.Command, args []string) error {
+	var keepID, mergeID int64
+	if _, err := fmt.Sscanf(args[0], "%d", &keepID); err != nil {
+		return fmt.Errorf("invalid keep-id %q: %w", args[0], err)
+	}
+	if _, err := fmt.Sscanf(args[1], "%d", &mergeID); err != nil {
+		return fmt.Errorf("invalid merge-id %q: %w", args[1], err)
+	}
+	if keepID == mergeID {
+		return fmt.Errorf("keep-id and merge-id must be different")
+	}
+
+	store, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Resolve names for human-friendly output.
+	people, err := store.GetAllPeople()
+	if err != nil {
+		return fmt.Errorf("loading people: %w", err)
+	}
+	names := make(map[int64]string, len(people))
+	for _, p := range people {
+		names[p.ID] = p.Name
+	}
+	keepName, ok := names[keepID]
+	if !ok {
+		return fmt.Errorf("keep-id %d not found", keepID)
+	}
+	mergeName, ok := names[mergeID]
+	if !ok {
+		return fmt.Errorf("merge-id %d not found", mergeID)
+	}
+
+	if err := store.MergePeople(keepID, mergeID); err != nil {
+		return fmt.Errorf("merging people: %w", err)
+	}
+
+	ui.SuccessMessage(fmt.Sprintf("Merged %s (id %d) into %s (id %d)",
+		ui.Bold.Render(fmt.Sprintf("%q", mergeName)), mergeID,
+		ui.Bold.Render(fmt.Sprintf("%q", keepName)), keepID))
+	return nil
+}
+
+func runFacesUnlabel(cmd *cobra.Command, args []string) error {
+	var faceID int64
+	if _, err := fmt.Sscanf(args[0], "%d", &faceID); err != nil {
+		return fmt.Errorf("invalid face ID %q: %w", args[0], err)
+	}
+
+	store, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if err := store.UnlabelFace(faceID); err != nil {
+		return fmt.Errorf("unlabeling face: %w", err)
+	}
+
+	ui.SuccessMessage(fmt.Sprintf("Face %s has been unlabeled.", ui.Highlight.Render(fmt.Sprintf("%d", faceID))))
 	return nil
 }
 

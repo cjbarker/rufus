@@ -30,8 +30,9 @@ type Result struct {
 
 // Crawl walks the directory tree rooted at root and sends discovered image
 // file paths to the returned channel. The channel is closed when crawling
-// is complete.
-func Crawl(root string, recursive bool) <-chan Result {
+// is complete. Directories whose base name or absolute path matches any entry
+// in excludes are skipped entirely (only applies in recursive mode).
+func Crawl(root string, recursive bool, excludes []string) <-chan Result {
 	ch := make(chan Result, 256)
 
 	go func() {
@@ -44,6 +45,9 @@ func Crawl(root string, recursive bool) <-chan Result {
 					return nil // skip entry, keep walking
 				}
 				if d.IsDir() {
+					if path != root && isExcluded(path, d.Name(), excludes) {
+						return fs.SkipDir
+					}
 					return nil
 				}
 				if !isImageFile(d.Name()) {
@@ -82,6 +86,25 @@ func Crawl(root string, recursive bool) <-chan Result {
 	}()
 
 	return ch
+}
+
+// isExcluded reports whether the directory at absPath should be skipped.
+// It matches against each exclude pattern by comparing the directory's base
+// name and its absolute path.
+func isExcluded(absPath, baseName string, excludes []string) bool {
+	for _, ex := range excludes {
+		if ex == baseName || ex == absPath {
+			return true
+		}
+		// Support glob patterns (e.g. ".*" to skip hidden dirs).
+		if matched, _ := filepath.Match(ex, baseName); matched {
+			return true
+		}
+		if matched, _ := filepath.Match(ex, absPath); matched {
+			return true
+		}
+	}
+	return false
 }
 
 func isImageFile(name string) bool {

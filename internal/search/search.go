@@ -8,9 +8,30 @@ import (
 	"github.com/cjbarker/rufus/internal/db"
 )
 
+// TagMode controls whether multi-tag filters use AND or OR logic.
+type TagMode string
+
+const (
+	TagModeAnd TagMode = "and" // image must have ALL tags
+	TagModeOr  TagMode = "or"  // image must have AT LEAST ONE tag
+)
+
+// SortField identifies the column used for ordering results.
+type SortField string
+
+const (
+	SortByPath    SortField = "path"
+	SortBySize    SortField = "size"
+	SortByDate    SortField = "date"
+	SortByFormat  SortField = "format"
+)
+
 // Query represents a search query with multiple filters.
 type Query struct {
-	Tag         string
+	// Tag filters (replaces the old single Tag field).
+	Tags    []string // filter by one or more tags
+	TagMode TagMode  // "and" (default) or "or"
+
 	Face        string
 	MinSize     int64
 	MaxSize     int64
@@ -18,12 +39,21 @@ type Query struct {
 	PathPattern string
 	Before      *time.Time
 	After       *time.Time
-	Limit       int
+
+	// Face-count filters.
+	HasFaces bool // only images with at least one labeled face
+	NoFaces  bool // only images with no detected faces
+
+	// Pagination / ordering.
+	SortBy     SortField
+	SortDesc   bool
+	Offset     int
+	Limit      int
 }
 
 // Result wraps a search result with optional relevance info.
 type Result struct {
-	Image    db.ImageRecord
+	Image     db.ImageRecord
 	MatchedBy string
 }
 
@@ -46,15 +76,34 @@ func (e *Engine) Search(q *Query) ([]Result, error) {
 		limit = 50
 	}
 
+	orderCol := "i.file_path"
+	switch q.SortBy {
+	case SortBySize:
+		orderCol = "i.file_size"
+	case SortByDate:
+		orderCol = "i.mod_time"
+	case SortByFormat:
+		orderCol = "i.format"
+	}
+	dir := "ASC"
+	if q.SortDesc {
+		dir = "DESC"
+	}
+
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
 	query := fmt.Sprintf(`
 		SELECT DISTINCT i.id, i.file_path, i.file_size, i.file_hash, i.width, i.height,
 		       i.format, i.mod_time, i.scanned_at, i.ahash, i.dhash, i.phash
 		FROM images i
 		%s
-		ORDER BY i.file_path
-		LIMIT ?`, where)
+		ORDER BY %s %s
+		LIMIT ? OFFSET ?`, where, orderCol, dir)
 
-	args = append(args, limit)
+	args = append(args, limit, offset)
 
 	rows, err := e.store.DB().Query(query, args...)
 	if err != nil {
@@ -84,10 +133,34 @@ func buildWhere(q *Query) (sqlClause string, sqlArgs []any) {
 	var conditions []string
 	var args []any
 
-	if q.Tag != "" {
+	// Multi-tag filtering.
+	switch len(q.Tags) {
+	case 0:
+		// no tag filter
+	case 1:
 		joins = append(joins, "JOIN tags t ON t.image_id = i.id")
 		conditions = append(conditions, "t.tag = ?")
-		args = append(args, q.Tag)
+		args = append(args, q.Tags[0])
+	default:
+		mode := q.TagMode
+		if mode == "" {
+			mode = TagModeAnd
+		}
+		placeholders := make([]string, len(q.Tags))
+		for i, tag := range q.Tags {
+			placeholders[i] = "?"
+			args = append(args, tag)
+		}
+		inList := strings.Join(placeholders, ", ")
+		if mode == TagModeAnd {
+			// Correlated subquery: image must have ALL tags.
+			conditions = append(conditions, fmt.Sprintf(
+				`(SELECT COUNT(DISTINCT tag) FROM tags WHERE image_id = i.id AND tag IN (%s)) = %d`,
+				inList, len(q.Tags)))
+		} else {
+			conditions = append(conditions, fmt.Sprintf(
+				`EXISTS (SELECT 1 FROM tags WHERE image_id = i.id AND tag IN (%s))`, inList))
+		}
 	}
 
 	if q.Face != "" {
@@ -95,6 +168,13 @@ func buildWhere(q *Query) (sqlClause string, sqlArgs []any) {
 		joins = append(joins, "JOIN people p ON p.id = f.person_id")
 		conditions = append(conditions, "p.name = ?")
 		args = append(args, q.Face)
+	}
+
+	if q.HasFaces {
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM faces WHERE image_id = i.id AND person_id IS NOT NULL)")
+	}
+	if q.NoFaces {
+		conditions = append(conditions, "NOT EXISTS (SELECT 1 FROM faces WHERE image_id = i.id)")
 	}
 
 	if q.MinSize > 0 {

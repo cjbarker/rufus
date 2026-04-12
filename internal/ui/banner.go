@@ -24,8 +24,11 @@ func Banner(version string) {
 	fmt.Println()
 }
 
-// SectionHeader prints a styled section header.
+// SectionHeader prints a styled section header (suppressed in quiet mode).
 func SectionHeader(title string) {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("\n%s\n", title)
 		return
@@ -33,8 +36,11 @@ func SectionHeader(title string) {
 	fmt.Printf("\n  %s\n", TitleStyle.Render(fmt.Sprintf(" %s ", title)))
 }
 
-// StatusLine prints a labeled status line with colored value.
+// StatusLine prints a labeled status line (suppressed in quiet mode).
 func StatusLine(label, value string) {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("  %s: %s\n", label, value)
 		return
@@ -42,8 +48,11 @@ func StatusLine(label, value string) {
 	fmt.Printf("  %s %s\n", Dim.Render(label+":"), Highlight.Render(value))
 }
 
-// SuccessMessage prints a success message with a checkmark.
+// SuccessMessage prints a success message (suppressed in quiet mode).
 func SuccessMessage(msg string) {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("[OK] %s\n", msg)
 		return
@@ -51,8 +60,11 @@ func SuccessMessage(msg string) {
 	fmt.Printf("  %s %s\n", SuccessStyle.Render("✔"), msg)
 }
 
-// WarningMessage prints a warning message.
+// WarningMessage prints a warning message (suppressed in quiet mode).
 func WarningMessage(msg string) {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("[WARN] %s\n", msg)
 		return
@@ -69,8 +81,11 @@ func ErrorMessage(msg string) {
 	fmt.Printf("  %s %s\n", ErrorStyle.Render("✖"), msg)
 }
 
-// InfoMessage prints an informational message.
+// InfoMessage prints an informational message (suppressed in quiet mode).
 func InfoMessage(msg string) {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("[INFO] %s\n", msg)
 		return

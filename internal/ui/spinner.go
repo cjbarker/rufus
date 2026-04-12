@@ -27,6 +27,9 @@ func NewSpinner(message string) *Spinner {
 
 // Start begins the spinner animation. Call Stop() to end it.
 func (s *Spinner) Start() {
+	if quietMode {
+		return
+	}
 	if !IsTTY() {
 		fmt.Printf("%s...\n", s.message)
 		return

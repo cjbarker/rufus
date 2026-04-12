@@ -74,3 +74,25 @@ type ScanStats struct {
 	FilesSkipped int
 	Errors       int
 }
+
+// Stats holds aggregate database statistics.
+type Stats struct {
+	Images   int64
+	Faces    int64
+	People   int64
+	Tags     int64
+	DBSizeBytes int64
+}
+
+// ExportRecord is a flat representation of an image with its tags used
+// for JSON/CSV export and import round-trips.
+type ExportRecord struct {
+	FilePath  string   `json:"file_path"`
+	FileSize  int64    `json:"file_size"`
+	FileHash  string   `json:"file_hash"`
+	Width     int      `json:"width"`
+	Height    int      `json:"height"`
+	Format    string   `json:"format"`
+	ModTime   string   `json:"mod_time"`
+	Tags      []string `json:"tags,omitempty"`
+}
