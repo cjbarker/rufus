@@ -1,0 +1,137 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"text/tabwriter"
+
+	"github.com/cjbarker/rufus/internal/db"
+	"github.com/cjbarker/rufus/internal/faces"
+	"github.com/spf13/cobra"
+)
+
+var facesTolerance float64
+
+var facesCmd = &cobra.Command{
+	Use:   "faces",
+	Short: "Detect and manage face labels",
+	Long: `Detect faces in indexed images, label them with names,
+and find images by person.`,
+}
+
+var facesDetectCmd = &cobra.Command{
+	Use:   "detect",
+	Short: "Detect faces in indexed images",
+	Long: `Run face detection on all indexed images that haven't been processed yet.
+Requires dlib models to be installed.`,
+	RunE: runFacesDetect,
+}
+
+var facesLabelCmd = &cobra.Command{
+	Use:   "label <face-id> <name>",
+	Short: "Label a detected face with a person's name",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runFacesLabel,
+}
+
+var facesFindCmd = &cobra.Command{
+	Use:   "find <name>",
+	Short: "Find all images containing a named person",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runFacesFind,
+}
+
+var facesListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all known people",
+	RunE:  runFacesList,
+}
+
+func init() {
+	facesCmd.PersistentFlags().Float64Var(&facesTolerance, "tolerance", 0.6, "face match tolerance")
+	facesCmd.AddCommand(facesDetectCmd)
+	facesCmd.AddCommand(facesLabelCmd)
+	facesCmd.AddCommand(facesFindCmd)
+	facesCmd.AddCommand(facesListCmd)
+	rootCmd.AddCommand(facesCmd)
+}
+
+func runFacesDetect(cmd *cobra.Command, args []string) error {
+	fmt.Println("Face detection requires dlib models.")
+	fmt.Println("This feature will be fully functional when dlib is installed.")
+	fmt.Println("See: https://github.com/Kagami/go-face for setup instructions.")
+	return nil
+}
+
+func runFacesLabel(cmd *cobra.Command, args []string) error {
+	store, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer store.Close()
+
+	var faceID int64
+	if _, err := fmt.Sscanf(args[0], "%d", &faceID); err != nil {
+		return fmt.Errorf("invalid face ID %q: %w", args[0], err)
+	}
+	name := args[1]
+
+	detector := faces.NewDetector(store, facesTolerance)
+	if err := detector.LabelFace(faceID, name); err != nil {
+		return fmt.Errorf("labeling face: %w", err)
+	}
+
+	fmt.Printf("Labeled face %d as %q\n", faceID, name)
+	return nil
+}
+
+func runFacesFind(cmd *cobra.Command, args []string) error {
+	store, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer store.Close()
+
+	detector := faces.NewDetector(store, facesTolerance)
+	images, err := detector.FindByPerson(args[0])
+	if err != nil {
+		return fmt.Errorf("finding images: %w", err)
+	}
+
+	if len(images) == 0 {
+		fmt.Printf("No images found for %q\n", args[0])
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "PATH\tSIZE\tRESOLUTION\n")
+	for _, img := range images {
+		fmt.Fprintf(w, "%s\t%s\t%dx%d\n", img.FilePath, formatSize(img.FileSize), img.Width, img.Height)
+	}
+	return w.Flush()
+}
+
+func runFacesList(cmd *cobra.Command, args []string) error {
+	store, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer store.Close()
+
+	people, err := store.GetAllPeople()
+	if err != nil {
+		return fmt.Errorf("listing people: %w", err)
+	}
+
+	if len(people) == 0 {
+		fmt.Println("No people labeled yet. Use 'rufus faces label' to label faces.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "ID\tNAME\tCREATED\n")
+	for _, p := range people {
+		fmt.Fprintf(w, "%d\t%s\t%s\n", p.ID, p.Name, p.CreatedAt.Format("2006-01-02"))
+	}
+	return w.Flush()
+}
