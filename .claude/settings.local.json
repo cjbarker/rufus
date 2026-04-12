@@ -24,7 +24,9 @@
       "Read(//Users/cbarker/go/pkg/mod/github.com/!kagami/**)",
       "Bash(brew --prefix jpeg-turbo)",
       "WebFetch(domain:github.com)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(make lint:*)",
+      "Bash(golangci-lint:*)"
     ]
   }
 }
