@@ -1,0 +1,60 @@
+package db
+
+import "time"
+
+// ImageRecord represents an indexed image in the database.
+type ImageRecord struct {
+	ID       int64
+	FilePath string
+	FileSize int64
+	FileHash string // SHA-256 hex
+	Width    int
+	Height   int
+	Format   string
+	ModTime  time.Time
+	ScannedAt time.Time
+	AHash    uint64
+	DHash    uint64
+	PHash    uint64
+}
+
+// FaceRecord represents a detected face in an image.
+type FaceRecord struct {
+	ID        int64
+	ImageID   int64
+	Descriptor []byte // 128-dim float64 encoding as binary
+	BoundsX   int
+	BoundsY   int
+	BoundsW   int
+	BoundsH   int
+	PersonID  *int64
+}
+
+// PersonRecord represents a named person for face recognition.
+type PersonRecord struct {
+	ID        int64
+	Name      string
+	CreatedAt time.Time
+}
+
+// TagRecord represents a tag on an image.
+type TagRecord struct {
+	ID      int64
+	ImageID int64
+	Tag     string
+}
+
+// DuplicateGroup represents a group of duplicate images.
+type DuplicateGroup struct {
+	Images   []ImageRecord
+	Distance int // Hamming distance between members
+	HashType string
+}
+
+// ScanStats holds statistics for a scan operation.
+type ScanStats struct {
+	FilesFound   int
+	FilesIndexed int
+	FilesSkipped int
+	Errors       int
+}
