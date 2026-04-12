@@ -191,6 +191,55 @@ func (s *Store) ImageCount() (int64, error) {
 	return count, err
 }
 
+// GetImagesWithoutFaces returns all images that have not yet had face detection run on them.
+func (s *Store) GetImagesWithoutFaces() ([]ImageRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, file_path, file_size, file_hash, width, height, format, mod_time, scanned_at, ahash, dhash, phash
+		FROM images
+		WHERE NOT EXISTS (SELECT 1 FROM faces WHERE faces.image_id = images.id)
+		ORDER BY file_path`)
+	if err != nil {
+		return nil, fmt.Errorf("querying unprocessed images: %w", err)
+	}
+	defer rows.Close()
+
+	var images []ImageRecord
+	for rows.Next() {
+		img, err := scanImage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning image row: %w", err)
+		}
+		images = append(images, img)
+	}
+	return images, rows.Err()
+}
+
+// GetAllFacesWithPerson returns all face records joined with their person name (if labeled).
+func (s *Store) GetAllFacesWithPerson() ([]FaceWithPerson, error) {
+	rows, err := s.db.Query(`
+		SELECT f.id, f.image_id, f.descriptor, f.bounds_x, f.bounds_y, f.bounds_w, f.bounds_h,
+		       f.person_id, COALESCE(p.name, '') as person_name
+		FROM faces f
+		LEFT JOIN people p ON p.id = f.person_id
+		ORDER BY f.id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying faces: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FaceWithPerson
+	for rows.Next() {
+		var fw FaceWithPerson
+		if err := rows.Scan(&fw.Face.ID, &fw.Face.ImageID, &fw.Face.Descriptor,
+			&fw.Face.BoundsX, &fw.Face.BoundsY, &fw.Face.BoundsW, &fw.Face.BoundsH,
+			&fw.Face.PersonID, &fw.PersonName); err != nil {
+			return nil, fmt.Errorf("scanning face row: %w", err)
+		}
+		results = append(results, fw)
+	}
+	return results, rows.Err()
+}
+
 // DeleteImage removes an image record from the database by ID.
 // The caller is responsible for deleting the actual file from the filesystem.
 func (s *Store) DeleteImage(id int64) error {

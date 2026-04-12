@@ -9,7 +9,16 @@
       "Bash(brew list:*)",
       "Bash(pkg-config --libs dlib-1)",
       "Bash(pkg-config --cflags --libs dlib-1)",
-      "Read(//opt/homebrew/Cellar/jpeg-turbo/3.1.4.1/include/**)"
+      "Read(//opt/homebrew/Cellar/jpeg-turbo/3.1.4.1/include/**)",
+      "Bash(brew info:*)",
+      "Bash(CGO_ENABLED=1 CGO_CPPFLAGS=\"-I/opt/homebrew/opt/jpeg-turbo/include\" CGO_LDFLAGS=\"-L/opt/homebrew/opt/jpeg-turbo/lib -ljpeg\" go build:*)",
+      "Bash(pkg-config --cflags dlib-1)",
+      "Read(//opt/homebrew/Cellar/dlib/20.0.1/lib/pkgconfig/**)",
+      "Bash(./rufus version:*)",
+      "Bash(./rufus faces:*)",
+      "Bash(make faces-build:*)",
+      "Bash(nm ./rufus)",
+      "Bash(go clean:*)"
     ]
   }
 }

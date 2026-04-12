@@ -44,6 +44,12 @@ type TagRecord struct {
 	Tag     string
 }
 
+// FaceWithPerson pairs a FaceRecord with the assigned person's name (empty if unlabeled).
+type FaceWithPerson struct {
+	Face       FaceRecord
+	PersonName string
+}
+
 // DuplicateGroup represents a group of duplicate images.
 type DuplicateGroup struct {
 	Images   []ImageRecord
