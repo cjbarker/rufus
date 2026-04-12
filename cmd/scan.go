@@ -179,7 +179,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 				if cfg.Verbose {
 					fmt.Printf("\r\033[K  %s %s (%dx%d %s)\n",
 						ui.SuccessStyle.Render("✔"),
-						ui.PathStyle.Render(res.rec.FilePath),
+						ui.FileLink(res.rec.FilePath),
 						res.rec.Width, res.rec.Height,
 						ui.FormatStyle.Render(res.rec.Format))
 				}

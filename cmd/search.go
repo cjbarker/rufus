@@ -116,7 +116,7 @@ func outputSearchTable(results []search.Result) error {
 	for _, r := range results {
 		img := r.Image
 		tbl.AddRow(
-			ui.PathStyle.Render(img.FilePath),
+			ui.FileLink(img.FilePath),
 			ui.SizeStyle.Render(formatSize(img.FileSize)),
 			fmt.Sprintf("%dx%d", img.Width, img.Height),
 			ui.FormatStyle.Render(img.Format),

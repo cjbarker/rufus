@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -80,4 +82,19 @@ func IsTTY() bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// FileLink wraps path in an OSC 8 terminal hyperlink (file:// URL) so the
+// user can Cmd/Ctrl+click to open the file directly from the terminal.
+// Falls back to styled plain text when stdout is not a TTY.
+func FileLink(path string) string {
+	styled := PathStyle.Render(path)
+	if !IsTTY() {
+		return styled
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	return fmt.Sprintf("\033]8;;file://%s\033\\%s\033]8;;\033\\", abs, styled)
 }

@@ -12,10 +12,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// exactBadge is the styled label shown in group headers for SHA-256 exact matches.
+var exactBadge = ui.ErrorStyle.Render("EXACT DUPLICATE")
+
 var (
 	dupesThreshold int
 	dupesHash      string
 	dupesFormat    string
+	dupesYes       bool
 )
 
 var dupesCmd = &cobra.Command{
@@ -31,6 +35,7 @@ func init() {
 	dupesCmd.Flags().IntVar(&dupesThreshold, "threshold", 10, "Hamming distance threshold for similarity")
 	dupesCmd.Flags().StringVar(&dupesHash, "hash", "dhash", "hash algorithm: ahash, dhash, phash")
 	dupesCmd.Flags().StringVar(&dupesFormat, "format", "table", "output format: table, json, csv")
+	dupesCmd.Flags().BoolVarP(&dupesYes, "yes", "y", false, "auto-confirm deletion of exact duplicate files without prompting")
 	rootCmd.AddCommand(dupesCmd)
 }
 
@@ -78,12 +83,11 @@ func runDupes(cmd *cobra.Command, args []string) error {
 	case "csv":
 		return outputDupesCSV(groups)
 	default:
-		outputDupesTable(groups)
-		return nil
+		return outputDupesTable(groups, store, dupesYes)
 	}
 }
 
-func outputDupesTable(groups []duplicates.Group) {
+func outputDupesTable(groups []duplicates.Group, store *db.Store, autoYes bool) error {
 	totalDupes := 0
 	for _, g := range groups {
 		totalDupes += len(g.Images) - 1 // subtract 1 for the "keep" image
@@ -96,37 +100,68 @@ func outputDupesTable(groups []duplicates.Group) {
 	ui.StatusLine("Duplicates", fmt.Sprintf("%d images", totalDupes))
 	fmt.Println()
 
+	divider := ui.SeparatorStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
 	for i, group := range groups {
 		ranked := duplicates.RankForKeeping(group)
+		isExact := group.HashType == duplicates.Exact
 
-		hashLabel := ui.FormatStyle.Render(string(group.HashType))
-		distLabel := ui.Dim.Render(fmt.Sprintf("max distance: %d", group.MaxDistance))
-
-		ui.GroupHeader(fmt.Sprintf(
-			"Group %s  %s images  %s  %s",
-			ui.Highlight.Render(fmt.Sprintf("%d", i+1)),
-			ui.Bold.Render(fmt.Sprintf("%d", len(group.Images))),
+		// Group header
+		fmt.Println(divider)
+		var hashLabel string
+		if isExact {
+			hashLabel = exactBadge
+		} else {
+			hashLabel = ui.FormatStyle.Render(string(group.HashType)) +
+				"   " + ui.Dim.Render(fmt.Sprintf("distance: %d", group.MaxDistance))
+		}
+		fmt.Printf("  %s   %s   %s\n",
+			ui.Highlight.Render(fmt.Sprintf("Group %d", i+1)),
+			ui.Bold.Render(fmt.Sprintf("%d images", len(group.Images))),
 			hashLabel,
-			distLabel,
-		))
+		)
+		fmt.Println(divider)
+		fmt.Println()
 
-		tbl := ui.NewTable("", "PATH", "SIZE", "RESOLUTION", "FORMAT")
+		// Image cards
 		for j, img := range ranked {
 			badge := ui.RemoveBadge
 			if j == 0 {
 				badge = ui.KeepBadge
 			}
-			tbl.AddRow(
-				badge,
-				ui.PathStyle.Render(img.FilePath),
+			meta := fmt.Sprintf("%s   %s   %s",
 				ui.SizeStyle.Render(formatSize(img.FileSize)),
-				fmt.Sprintf("%dx%d", img.Width, img.Height),
+				ui.Dim.Render(fmt.Sprintf("%dx%d", img.Width, img.Height)),
 				ui.FormatStyle.Render(img.Format),
 			)
+			fmt.Printf("  %s  %s\n", badge, ui.FileLink(img.FilePath))
+			fmt.Printf("          %s\n\n", meta)
 		}
-		tbl.Render()
-		fmt.Println()
+
+		// Prompt to delete exact duplicates (all images except the recommended keep)
+		if isExact {
+			toDelete := ranked[1:]
+			noun := "duplicate"
+			if len(toDelete) > 1 {
+				noun = "duplicates"
+			}
+			if autoYes || ui.Confirm(fmt.Sprintf("Delete %d exact %s?", len(toDelete), noun), false) {
+				for _, img := range toDelete {
+					if err := os.Remove(img.FilePath); err != nil {
+						ui.ErrorMessage(fmt.Sprintf("Could not delete file: %v", err))
+						continue
+					}
+					if err := store.DeleteImage(img.ID); err != nil {
+						ui.ErrorMessage(fmt.Sprintf("Removed file but failed to update index: %v", err))
+						continue
+					}
+					ui.SuccessMessage(fmt.Sprintf("Deleted %s", img.FilePath))
+				}
+			}
+			fmt.Println()
+		}
 	}
+	return nil
 }
 
 type dupesJSONOutput struct {

@@ -111,7 +111,7 @@ func runFacesFind(cmd *cobra.Command, args []string) error {
 	tbl := ui.NewTable("PATH", "SIZE", "RESOLUTION")
 	for _, img := range images {
 		tbl.AddRow(
-			ui.PathStyle.Render(img.FilePath),
+			ui.FileLink(img.FilePath),
 			ui.SizeStyle.Render(formatSize(img.FileSize)),
 			fmt.Sprintf("%dx%d", img.Width, img.Height),
 		)

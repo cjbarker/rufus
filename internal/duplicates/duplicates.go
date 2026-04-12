@@ -14,6 +14,7 @@ const (
 	AHash HashType = "ahash"
 	DHash HashType = "dhash"
 	PHash HashType = "phash"
+	Exact HashType = "exact"
 )
 
 // Group represents a set of duplicate images.

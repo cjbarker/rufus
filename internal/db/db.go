@@ -191,6 +191,16 @@ func (s *Store) ImageCount() (int64, error) {
 	return count, err
 }
 
+// DeleteImage removes an image record from the database by ID.
+// The caller is responsible for deleting the actual file from the filesystem.
+func (s *Store) DeleteImage(id int64) error {
+	_, err := s.db.Exec("DELETE FROM images WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("deleting image %d: %w", id, err)
+	}
+	return nil
+}
+
 // InsertFace inserts a face detection record.
 func (s *Store) InsertFace(rec *FaceRecord) (int64, error) {
 	result, err := s.db.Exec(`
