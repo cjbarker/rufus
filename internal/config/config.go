@@ -12,11 +12,14 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	DBPath  string `json:"db"`
-	Workers int    `json:"workers"`
-	Verbose bool   `json:"verbose"`
-	Quiet   bool   `json:"quiet"`
-	NoColor bool   `json:"no_color"`
+	DBPath    string `json:"db"`
+	Workers   int    `json:"workers"`
+	Verbose   bool   `json:"verbose"`
+	Quiet     bool   `json:"quiet"`
+	NoColor   bool   `json:"no_color"`
+	LLMApiURL string `json:"llm_api_url"`
+	LLMApiKey string `json:"llm_api_key"`
+	LLMModel  string `json:"llm_model"`
 }
 
 // DefaultDBPath returns the default database file path (~/.rufus/rufus.db).
@@ -40,11 +43,13 @@ func DefaultConfigPath() string {
 // Default returns a Config with default values.
 func Default() *Config {
 	return &Config{
-		DBPath:  DefaultDBPath(),
-		Workers: runtime.NumCPU(),
-		Verbose: false,
-		Quiet:   false,
-		NoColor: false,
+		DBPath:    DefaultDBPath(),
+		Workers:   runtime.NumCPU(),
+		Verbose:   false,
+		Quiet:     false,
+		NoColor:   false,
+		LLMApiURL: "https://api.openai.com/v1/chat/completions",
+		LLMModel:  "gpt-4o",
 	}
 }
 
@@ -94,6 +99,15 @@ func ApplyEnv(dst *Config) {
 	}
 	if v := os.Getenv("RUFUS_NO_COLOR"); v != "" {
 		dst.NoColor = isTruthy(v)
+	}
+	if v := os.Getenv("RUFUS_LLM_API_URL"); v != "" {
+		dst.LLMApiURL = v
+	}
+	if v := os.Getenv("RUFUS_LLM_API_KEY"); v != "" {
+		dst.LLMApiKey = v
+	}
+	if v := os.Getenv("RUFUS_LLM_MODEL"); v != "" {
+		dst.LLMModel = v
 	}
 }
 

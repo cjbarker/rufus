@@ -12,6 +12,7 @@ Rufus crawls directories to index images, detects duplicates using perceptual ha
 - **Image Inspection** -- Show all stored metadata for a single indexed image: file details, hashes, tags, and detected faces
 - **Library Stats** -- Quick summary of indexed images, faces, people, tags, and database size
 - **Export / Import** -- Export the full index to JSON or CSV; import it back into any Rufus database
+- **Alt-Text Generation** -- Send an image to an LLM vision API to generate W3C-compliant alt-text keywords, with optional auto-tagging
 - **Advanced Search** -- Filter by tags (AND/OR), face, file size, format, date range, path pattern, and face presence
 
   **Pipeline:**
@@ -151,6 +152,23 @@ make build
 ./rufus faces detect --force
 ```
 
+### Alt-Text Generation
+
+Generate alt-text keywords for images using an LLM vision API (OpenAI-compatible). The image is resized to 512x512 before sending for faster processing.
+
+```bash
+# Generate alt-text keywords for an image
+./rufus alttext --api-key $OPENAI_API_KEY ~/Photos/sunset.jpg
+
+# Generate keywords and save them as tags in the database
+./rufus alttext --api-key $OPENAI_API_KEY --tag ~/Photos/sunset.jpg
+
+# Use a custom LLM endpoint (e.g. Ollama, Azure OpenAI, LiteLLM)
+./rufus alttext --api-url http://localhost:11434/v1/chat/completions --api-key local --model llava ~/Photos/sunset.jpg
+```
+
+The API endpoint, key, and model can also be set via environment variables (`RUFUS_LLM_API_URL`, `RUFUS_LLM_API_KEY`, `RUFUS_LLM_MODEL`) or the config file (`~/.rufus/config.json`).
+
 ## Configuration
 
 Rufus reads a configuration file at `~/.rufus/config.json` (created automatically on first run). Any value in the config file can be overridden by an environment variable or a CLI flag.
@@ -158,7 +176,7 @@ Rufus reads a configuration file at `~/.rufus/config.json` (created automaticall
 | Priority | Source |
 |----------|--------|
 | 1 (highest) | CLI flags |
-| 2 | Environment variables (`RUFUS_DB`, `RUFUS_WORKERS`, `RUFUS_VERBOSE`, `RUFUS_QUIET`, `RUFUS_NO_COLOR`) |
+| 2 | Environment variables (`RUFUS_DB`, `RUFUS_WORKERS`, `RUFUS_VERBOSE`, `RUFUS_QUIET`, `RUFUS_NO_COLOR`, `RUFUS_LLM_API_URL`, `RUFUS_LLM_API_KEY`, `RUFUS_LLM_MODEL`) |
 | 3 | Config file (`~/.rufus/config.json`) |
 | 4 (lowest) | Built-in defaults |
 

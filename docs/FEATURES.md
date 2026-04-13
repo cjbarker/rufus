@@ -13,13 +13,16 @@ Available on every command.
 | `-v, --verbose` | `false` | Verbose output |
 | `-q, --quiet` | `false` | Suppress all non-error output (useful for scripting) |
 | `--no-color` | `false` | Disable ANSI color output |
+| `--api-url` | `https://api.openai.com/v1/chat/completions` | LLM API endpoint URL |
+| `--api-key` | | LLM API key |
+| `--model` | `gpt-4o` | LLM model name |
 
 ## Configuration
 
 Rufus supports layered configuration. Values are applied in this priority order (highest wins):
 
 1. **CLI flags** -- explicit flags on the command line
-2. **Environment variables** -- `RUFUS_DB`, `RUFUS_WORKERS`, `RUFUS_VERBOSE`, `RUFUS_QUIET`, `RUFUS_NO_COLOR`
+2. **Environment variables** -- `RUFUS_DB`, `RUFUS_WORKERS`, `RUFUS_VERBOSE`, `RUFUS_QUIET`, `RUFUS_NO_COLOR`, `RUFUS_LLM_API_URL`, `RUFUS_LLM_API_KEY`, `RUFUS_LLM_MODEL`
 3. **Config file** -- `~/.rufus/config.json` (JSON, created automatically on first run)
 4. **Built-in defaults**
 
@@ -30,7 +33,10 @@ Example config file:
   "db": "/data/photos/rufus.db",
   "workers": 8,
   "quiet": false,
-  "no_color": false
+  "no_color": false,
+  "llm_api_url": "https://api.openai.com/v1/chat/completions",
+  "llm_api_key": "",
+  "llm_model": "gpt-4o"
 }
 ```
 
@@ -426,6 +432,59 @@ List all known labeled people.
 ```bash
 rufus faces list
 ```
+
+### `alttext` -- Generate Image Alt-Text
+
+Send an image to an OpenAI-compatible LLM vision API to generate descriptive alt-text keywords following W3C guidelines. The image is automatically resized to fit within 512x512 pixels before sending to optimize speed and memory.
+
+```bash
+rufus alttext <image-path>
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tag` | `false` | Save generated keywords as tags on the indexed image |
+
+The LLM endpoint, API key, and model are configured via the global `--api-url`, `--api-key`, and `--model` flags (or the corresponding environment variables / config file entries).
+
+**Examples:**
+
+```bash
+# Generate alt-text keywords for an image
+rufus alttext --api-key $OPENAI_API_KEY ~/Photos/sunset.jpg
+
+# Generate keywords and auto-save as tags
+rufus alttext --api-key $OPENAI_API_KEY --tag ~/Photos/sunset.jpg
+
+# Use a custom LLM endpoint (Ollama, Azure OpenAI, LiteLLM, etc.)
+rufus alttext --api-url http://localhost:11434/v1/chat/completions --api-key local --model llava ~/Photos/sunset.jpg
+
+# Use environment variables instead of flags
+export RUFUS_LLM_API_KEY="sk-..."
+export RUFUS_LLM_MODEL="gpt-4o"
+rufus alttext ~/Photos/sunset.jpg
+```
+
+**Output:**
+
+```
+Alt Text for ~/Photos/sunset.jpg
+
+  • sunset
+  • ocean
+  • golden hour
+  • warm
+  • peaceful
+  • horizon
+  • waves
+  • beach
+  • serene
+  • dusk
+```
+
+With `--tag`, the keywords are also saved as database tags. The image must be indexed first with `rufus scan` when using `--tag`.
 
 ### `version`
 

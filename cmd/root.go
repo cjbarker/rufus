@@ -38,6 +38,15 @@ across your photo library.`,
 			if !pf.Changed("no-color") {
 				cfg.NoColor = fileCfg.NoColor
 			}
+			if !pf.Changed("api-url") && fileCfg.LLMApiURL != "" {
+				cfg.LLMApiURL = fileCfg.LLMApiURL
+			}
+			if !pf.Changed("api-key") && fileCfg.LLMApiKey != "" {
+				cfg.LLMApiKey = fileCfg.LLMApiKey
+			}
+			if !pf.Changed("model") && fileCfg.LLMModel != "" {
+				cfg.LLMModel = fileCfg.LLMModel
+			}
 		}
 		config.ApplyEnv(cfg)
 		// CLI flags override env vars for booleans (re-apply if explicitly set).
@@ -49,6 +58,15 @@ across your photo library.`,
 		}
 		if pf.Changed("no-color") {
 			cfg.NoColor, _ = pf.GetBool("no-color")
+		}
+		if pf.Changed("api-url") {
+			cfg.LLMApiURL, _ = pf.GetString("api-url")
+		}
+		if pf.Changed("api-key") {
+			cfg.LLMApiKey, _ = pf.GetString("api-key")
+		}
+		if pf.Changed("model") {
+			cfg.LLMModel, _ = pf.GetString("model")
 		}
 		ui.SetQuiet(cfg.Quiet)
 		ui.SetNoColor(cfg.NoColor)
@@ -62,6 +80,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&cfg.Verbose, "verbose", "v", cfg.Verbose, "verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&cfg.Quiet, "quiet", "q", cfg.Quiet, "suppress all non-error output")
 	rootCmd.PersistentFlags().BoolVar(&cfg.NoColor, "no-color", cfg.NoColor, "disable color output")
+	rootCmd.PersistentFlags().StringVar(&cfg.LLMApiURL, "api-url", cfg.LLMApiURL, "LLM API endpoint URL")
+	rootCmd.PersistentFlags().StringVar(&cfg.LLMApiKey, "api-key", cfg.LLMApiKey, "LLM API key")
+	rootCmd.PersistentFlags().StringVar(&cfg.LLMModel, "model", cfg.LLMModel, "LLM model name")
 }
 
 // Execute runs the root command.
