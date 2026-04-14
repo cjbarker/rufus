@@ -16,3 +16,6 @@ Thumbs.db
 
 # Go
 vendor/
+
+# Lib dependencies
+.cblas-shim/

@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // AcquireLock creates an exclusive lock file alongside the database so that
@@ -17,6 +18,11 @@ import (
 // describing the lock file path is returned so the user knows how to recover.
 func AcquireLock(dbPath string) (release func(), err error) {
 	lockPath := dbPath + ".lock"
+
+	// Ensure parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, fmt.Errorf("creating lock file directory: %w", err)
+	}
 
 	// Attempt atomic exclusive creation.
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

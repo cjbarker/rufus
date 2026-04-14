@@ -25,7 +25,18 @@
       "WebFetch(domain:github.com)",
       "Bash(go vet:*)",
       "Bash(make lint:*)",
-      "Bash(golangci-lint:*)"
+      "Bash(golangci-lint:*)",
+      "Bash(make test:*)",
+      "Bash(pkg-config --exists dlib-1)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(dpkg -l libatlas-base-dev)",
+      "Bash(dpkg -l libopenblas-dev)",
+      "Bash(apt-cache search:*)",
+      "Read(//usr/lib/**)",
+      "Bash(ls /usr/lib/x86_64-linux-gnu/libcblas*)",
+      "Bash(dpkg -S libcblas)",
+      "Bash(go list:*)",
+      "Bash(ldd /home/cj/repos/rufus/rufus)"
     ]
   }
 }

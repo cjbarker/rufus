@@ -22,11 +22,29 @@ build-faces:
 	$(eval JPEG_PREFIX := $(shell brew --prefix jpeg-turbo 2>/dev/null || brew --prefix jpeg 2>/dev/null))
 	$(eval JPEG_CFLAGS := $(if $(JPEG_PREFIX),-I$(JPEG_PREFIX)/include))
 	$(eval JPEG_LIBS   := $(if $(JPEG_PREFIX),-L$(JPEG_PREFIX)/lib -ljpeg))
+	@if [ "$(shell uname)" = "Linux" ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcblas.so ] && \
+		[ -e /usr/lib/x86_64-linux-gnu/libblas.so ]; then \
+		mkdir -p .cblas-shim; \
+		ln -sf /usr/lib/x86_64-linux-gnu/libblas.so .cblas-shim/libcblas.so; \
+	fi
 	CGO_ENABLED=1 \
 	CGO_CPPFLAGS="$(DLIB_CFLAGS) $(JPEG_CFLAGS)" \
-	CGO_LDFLAGS="$(DLIB_LIBS) $(JPEG_LIBS)" \
+	CGO_LDFLAGS="$(DLIB_LIBS) $(JPEG_LIBS) -L$(CURDIR)/.cblas-shim" \
 	go build -a -tags dlib $(LDFLAGS) -o $(BINARY) 2>/dev/null || \
 		(CGO_ENABLED=0 go build $(LDFLAGS) -o $(BINARY) && echo "==> Built $(BINARY) without face detection (dependencies missing)")
+
+# install-dlib installs dlib and libjpeg system libraries needed for face detection.
+install-dlib:
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "==> Installing dlib and jpeg-turbo via Homebrew..."; \
+		brew install dlib jpeg-turbo; \
+	elif command -v apt-get >/dev/null 2>&1; then \
+		echo "==> Installing dlib and libjpeg via apt-get..."; \
+		sudo apt-get install -y libdlib-dev libjpeg-dev libblas-dev liblapack-dev libopenblas-dev; \
+	else \
+		echo "ERROR: Unsupported platform. Install dlib manually: https://github.com/Kagami/go-face#requirements"; \
+		exit 1; \
+	fi
 
 # build-no-faces compiles rufus without CGO or dlib — no face detection support.
 build-no-faces:
@@ -43,4 +61,5 @@ ci: lint test build
 
 clean:
 	rm -f $(BINARY)
+	rm -rf .cblas-shim
 	go clean -cache -testcache
